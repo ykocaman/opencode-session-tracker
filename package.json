@@ -1,0 +1,37 @@
+{
+  "name": "opencode-session-tracker",
+  "version": "1.0.1",
+  "description": "OpenCode TUI plugin - list and switch between sessions in the sidebar",
+  "type": "module",
+  "exports": {
+    "./tui": "./dist/tui.tsx"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "rm -rf dist && mkdir -p dist && cp src/index.tsx dist/tui.tsx"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "sidebar",
+    "sessions"
+  ],
+  "license": "MIT",
+  "author": "ykocaman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ykocaman/opencode-session-tracker.git"
+  },
+  "engines": {
+    "opencode": ">=1.4.3"
+  },
+  "dependencies": {
+    "@opencode-ai/plugin": "^1.18.0",
+    "@opentui/core": "^0.4.3",
+    "@opentui/solid": "^0.4.3",
+    "solid-js": "^1.9.14"
+  }
+}
