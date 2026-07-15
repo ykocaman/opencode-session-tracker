@@ -1,6 +1,6 @@
 {
   "name": "opencode-session-tracker",
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "OpenCode TUI plugin - list and switch between sessions in the sidebar",
   "type": "module",
   "exports": {
