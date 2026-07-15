@@ -70,8 +70,29 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
           }
       });
       
+      parents.sort((a: any, b: any) => {
+          let aActive = false;
+          let bActive = false;
+          
+          const checkActive = (session: any) => {
+              const [status] = getStatusSignal(session.id);
+              const st = status();
+              return st !== "idle" && st !== "done" && st !== "error";
+          };
+          
+          if (checkActive(a)) aActive = true;
+          a.subagents?.forEach((sub: any) => { if (checkActive(sub)) aActive = true; });
+          
+          if (checkActive(b)) bActive = true;
+          b.subagents?.forEach((sub: any) => { if (checkActive(sub)) bActive = true; });
+          
+          if (aActive && !bActive) return -1;
+          if (!aActive && bActive) return 1;
+          return (b.time?.updated || 0) - (a.time?.updated || 0);
+      });
+      
       const list: any[] = [];
-      parents.slice(0, 3).forEach((p: any) => {
+      parents.slice(0, 10).forEach((p: any) => {
           const hasSubs = p.subagents && p.subagents.length > 0;
           list.push({ ...p, isSubagent: false, hasSubagents: hasSubs });
           
@@ -110,14 +131,15 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
             const st = api.state.session.status(s.id);
             currentType = typeof st === "string" ? st : (st?.type || "idle");
         }
-        setStatus(currentType);
+        
+        setTimeout(() => setStatus(currentType), 0);
       });
       
       return list;
   };
   
   return (
-    <box flexDirection="column" marginTop={1}>
+    <box flexDirection="column" marginTop={1} flexShrink={0}>
       <text bold fg="white">Sessions</text>
       <Show when={displaySessions()?.length === 0}>
         <text fg="gray">No sessions found</text>
@@ -148,18 +170,19 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
            
            const nav = () => api.route.navigate("session", { sessionID: session.id });
            
-           const currentIndicator = isCurrent() ? "▶" : " ";
            const prefix = session.isSubagent ? (session.isLastSubagent ? " └─ " : " ├─ ") : "";
-           const expandIcon = session.hasSubagents ? (expanded().has(session.id) ? "[-] " : "[+] ") : "";
            const titleText = session.title?.slice(0, session.isSubagent ? 20 : 23) || session.id.slice(0,8);
            
            return (
-             <box flexDirection="row" gap={1}>
-               <text fg={isCurrent() ? "green" : "gray"} onMouseDown={nav}>{currentIndicator}</text>
-               
+             <box flexDirection="row" gap={1} flexShrink={0}>
                <box flexDirection="row" gap={0}>
-                 <Show when={!session.isSubagent && session.hasSubagents}>
-                   <text fg="cyan" onMouseDown={() => toggleExpanded(session.id)}>{expandIcon}</text>
+                 <Show when={!session.isSubagent}>
+                   <text 
+                     fg={session.hasSubagents ? "cyan" : "gray"} 
+                     onMouseDown={session.hasSubagents ? () => toggleExpanded(session.id) : undefined}
+                   >
+                     {session.hasSubagents ? (expanded().has(session.id) ? "[-] " : "[+] ") : "[-] "}
+                   </text>
                  </Show>
                  <text fg={isCurrent() ? "white" : "gray"} onMouseDown={nav}>{prefix}{titleText}</text>
                </box>
@@ -169,6 +192,7 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
            );
         }}
       </For>
+
     </box>
   );
 }
@@ -213,7 +237,7 @@ const tui: TuiPlugin = async (api) => {
 };
 
 const plugin: TuiPluginModule & { id: string } = {
-  id: "opencode-session-lister",
+  id: "opencode-session-tracker",
   tui,
 };
 
