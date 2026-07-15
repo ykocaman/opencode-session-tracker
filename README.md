@@ -1,5 +1,10 @@
 # OpenCode Session Tracker
 
+[![npm version](https://img.shields.io/npm/v/opencode-session-tracker.svg?style=flat-square)](https://www.npmjs.com/package/opencode-session-tracker)
+[![npm downloads](https://img.shields.io/npm/dm/opencode-session-tracker.svg?style=flat-square)](https://www.npmjs.com/package/opencode-session-tracker)
+[![GitHub stars](https://img.shields.io/github/stars/ykocaman/opencode-session-tracker?style=flat-square)](https://github.com/ykocaman/opencode-session-tracker/stargazers)
+[![GitHub issues](https://img.shields.io/github/issues/ykocaman/opencode-session-tracker.svg?style=flat-square)](https://github.com/ykocaman/astro-medium-loaderopencode-session-tracker/issues)
+
 A lightweight and robust TUI plugin for [OpenCode](https://github.com/sst/opencode) that brings real-time session tracking, subagent grouping, and status monitoring directly to your sidebar.
 
 Managing multiple active sessions and navigating between different project agents can become difficult as workflows scale. `opencode-session-tracker` solves this by providing a clean, interactive tree-view, allowing you to instantly see what your agents are doing and switch contexts seamlessly.
