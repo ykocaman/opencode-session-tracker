@@ -1,42 +1,74 @@
-# OpenCode Session Tracker
+# OpenCode Session Tracker (v2.0.0)
 
 [![npm version](https://img.shields.io/npm/v/opencode-session-tracker.svg?style=flat-square)](https://www.npmjs.com/package/opencode-session-tracker)
 [![npm downloads](https://img.shields.io/npm/dm/opencode-session-tracker.svg?style=flat-square)](https://www.npmjs.com/package/opencode-session-tracker)
 [![GitHub stars](https://img.shields.io/github/stars/ykocaman/opencode-session-tracker?style=flat-square)](https://github.com/ykocaman/opencode-session-tracker/stargazers)
-[![GitHub issues](https://img.shields.io/github/issues/ykocaman/opencode-session-tracker.svg?style=flat-square)](https://github.com/ykocaman/astro-medium-loaderopencode-session-tracker/issues)
 
-A lightweight and robust TUI plugin for [OpenCode](https://github.com/sst/opencode) that brings real-time session tracking, subagent grouping, and status monitoring directly to your sidebar.
+A lightweight, robust TUI sidebar extension and interactive **Telegram Companion** for [OpenCode](https://github.com/sst/opencode) that brings real-time session tracking, multi-process routing, and remote monitoring directly to your terminal and phone.
 
-Managing multiple active sessions and navigating between different project agents can become difficult as workflows scale. `opencode-session-tracker` solves this by providing a clean, interactive tree-view, allowing you to instantly see what your agents are doing and switch contexts seamlessly.
+---
 
-![OpenCode Session Tracker Screenshot](docs/screenshot.png)
+## 📱 Telegram Companion (New in v2.0.0)
 
-## Features
+Monitor and drive your terminal agents remotely from your mobile device. When active, you can send instructions, receive live HTML-styled updates, answer interactive questions, and authorize agent commands without touching your computer.
 
-- **Interactive Sidebar:** Click on any session to instantly switch to it.
-- **Subagent Grouping:** Subagents are neatly nested under their parent sessions like a folder tree. You can expand/collapse them by clicking the `[+]` or `[-]` icons.
-- **Smart Active Pop-out:** Even if a parent session is collapsed, any subagent that is currently doing work (running, waiting, or asking for permission) will automatically pop out so you don't miss it!
-- **Real-Time Status Indicators:** 
-  - `[RUN]` (Green): Agent is actively running/generating.
-  - `[IDLE]` (Gray): Agent is done and waiting.
-  - `[WAIT]` (Yellow): Agent is retrying or waiting on an internal process.
-  - `[ASK]` (Magenta): Agent is waiting for you to answer a question.
-  - `[PERM]` (Magenta): Agent is waiting for your permission to run a command.
+<p align="center">
+  <img src="docs/telegram-projects.png" width="300" alt="Telegram Projects & Sessions Selection" />
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/telegram-prompt.png" width="300" alt="Telegram Live Prompt Tracking" />
+</p>
 
-## Installation
+* **Live Status Streaming:** Follow your agent's thinking process and tool executions formatted cleanly in real-time.
+* **Interactive Approvals:** Answer questions and authorize terminal commands (`allow` or `deny` permissions) directly via Telegram buttons.
+* **Cross-Process Routing:** Multi-window support automatically syncs session views and routes prompts to the correct terminal window.
+* **Zero Overhead:** Idle state polling is fully cached and throttled to respect Telegram rate-limits.
 
-1. Run the official OpenCode plugin installation command:
+> [!TIP]
+> To get started with the mobile control bot, check out the [Telegram Setup Guide](docs/telegram-setup.md).
+
+---
+
+## 🖥️ TUI Sidebar Features
+
+<p align="center">
+  <img src="docs/tui1.png" width="400" alt="OpenCode Session Tracker Sidebar" />
+</p>
+
+* **Session Hierarchies:** Neatly groups subagents nested under their parent sessions like folder trees. Toggle expand/collapse with `[+]` or `[-]`.
+* **Smart Active Pop-out:** collapsing parent folders won't hide running processes. Active subagents doing work pop out automatically.
+* **Visual Status Tags:**
+  * `[RUN]` (Green): Agent is actively running a tool or generating code.
+  * `[IDLE]` (Gray): Agent completed its task and is idle.
+  * `[WAIT]` (Yellow): Agent is waiting or retrying an internal process.
+  * `[ASK]` (Magenta): Agent is waiting for you to answer a question.
+  * `[PERM]` (Magenta): Agent is waiting for permission to execute a command.
+
+---
+
+## 📥 Installation
+
+Install globally using the official OpenCode plugin command:
+
+```bash
+opencode plugin opencode-session-tracker --global
+```
+
+Restart OpenCode, and the sidebar will load automatically.
+
+---
+
+## 🔧 Developer Setup
+
+If you want to customize or develop the plugin locally:
+
+1. Clone the repository and install dependencies:
    ```bash
-   opencode plugin opencode-session-tracker --global
+   git clone https://github.com/ykocaman/opencode-session-tracker.git
+   cd opencode-session-tracker
+   npm install
    ```
-
-2. Restart OpenCode!
-
-## Development
-
-If you want to tweak this plugin yourself:
-1. Clone this repository.
-2. Run `npm install` to grab the dependencies.
-3. Edit `src/index.tsx`.
-4. Run `npm run build` to compile the TSX into the `dist` folder.
-5. Point your `tui.json` to the absolute path of this cloned repo.
+2. Build the plugin:
+   ```bash
+   npm run build
+   ```
+3. Load the plugin locally in OpenCode by adding the absolute path of this folder to your `tui.json` configuration file.

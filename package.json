@@ -1,6 +1,6 @@
 {
   "name": "opencode-session-tracker",
-  "version": "1.1.1",
+  "version": "2.0.0",
   "description": "OpenCode TUI plugin - list and switch between sessions in the sidebar",
   "type": "module",
   "exports": {
@@ -11,7 +11,9 @@
     "README.md"
   ],
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist && cp src/index.tsx dist/tui.tsx"
+    "build": "rm -rf dist && mkdir -p dist && cp src/index.tsx dist/tui.tsx && cp src/telegram.ts dist/telegram.ts",
+    "dev": "node -e \"const f=require('fs'),s=['src/index.tsx','src/telegram.ts'],d=['dist/tui.tsx','dist/telegram.ts'],c=()=>{s.forEach((p,i)=>{try{f.cpSync(p,d[i])}catch(e){}});console.log('built',new Date().toLocaleTimeString())};if(!f.existsSync('dist'))f.mkdirSync('dist');c();s.forEach(p=>f.watch(p,c));console.log('watching...')\"",
+    "prepublishOnly": "npm run build"
   },
   "keywords": [
     "opencode",
@@ -32,6 +34,10 @@
     "@opencode-ai/plugin": "^1.18.0",
     "@opentui/core": "^0.4.3",
     "@opentui/solid": "^0.4.3",
+    "node-telegram-bot-api": "^0.66.0",
     "solid-js": "^1.9.14"
+  },
+  "devDependencies": {
+    "@types/node-telegram-bot-api": "^0.64.15"
   }
 }
