@@ -13,10 +13,14 @@ A lightweight, robust TUI sidebar extension and interactive **Telegram Companion
 Monitor and drive your terminal agents remotely from your mobile device. When active, you can send instructions, receive live HTML-styled updates, answer interactive questions, and authorize agent commands without touching your computer.
 
 <p align="center">
-  <img src="docs/telegram-projects.png" width="300" alt="Telegram Projects & Sessions Selection" />
-  &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/telegram-prompt.png" width="300" alt="Telegram Live Prompt Tracking" />
-</p>
+  <img src="docs/telegram-projects.png" alt="Telegram Projects & Sessions Selection" />
+  Projects & sessions — select an active session to monitor or interact with.</p>
+
+<br>
+
+<p align="center">
+  <img src="docs/telegram-prompt.png" alt="Telegram Live Prompt Tracking" />
+Live prompt tracking — follow your agent's thinking and tool calls in real-time, with buttons to approve or deny commands.</p>
 
 * **Live Status Streaming:** Follow your agent's thinking process and tool executions formatted cleanly in real-time.
 * **Interactive Approvals:** Answer questions and authorize terminal commands (`allow` or `deny` permissions) directly via Telegram buttons.
