@@ -1,6 +1,6 @@
 {
   "name": "opencode-session-tracker",
-  "version": "2.3.28",
+  "version": "2.3.29",
   "description": "OpenCode TUI plugin & Telegram Integration - Track active sessions/subagents in the sidebar and interact remotely from your phone",
   "type": "module",
   "exports": {
