@@ -262,11 +262,11 @@ function collapseDiffHeaders(text: string): string {
     const line = lines[i];
     const trimmed = line.trim();
     
-    const editMatch = trimmed.match(/^(?:[←➔→✏️📄\-*•]\s*)?Edit:?\s+([^\s]+)(.*)$/i);
-    const readMatch = trimmed.match(/^(?:[←➔→✏️📄\-*•]\s*)?Read:?\s+([^\s]+)(.*)$/i);
-    const writeMatch = trimmed.match(/^(?:[←➔→✏️📄\-*•]\s*)?Write:?\s+([^\s]+)(.*)$/i);
-    const grepMatch = trimmed.match(/^(?:[✱★➔→]\s*)?Grep\s+(.+?)\s+in\s+(.+)$/i);
-    const grepSimpleMatch = trimmed.match(/^(?:[✱★➔→]\s*)?Grep\s+(.+)$/i);
+    const editMatch = trimmed.match(/^[^\w\s]*\s*Edit:?\s+([^\s]+)(.*)$/i);
+    const readMatch = trimmed.match(/^[^\w\s]*\s*Read:?\s+([^\s]+)(.*)$/i);
+    const writeMatch = trimmed.match(/^[^\w\s]*\s*Write:?\s+([^\s]+)(.*)$/i);
+    const grepMatch = trimmed.match(/^[^\w\s]*\s*Grep\s+(.+?)\s+in\s+(.+)$/i);
+    const grepSimpleMatch = trimmed.match(/^[^\w\s]*\s*Grep\s+(.+)$/i);
     const runningMatch = trimmed.match(/^(?:#+\s*)?Running\s+in\s+(.+)$/i);
     
     if (editMatch) {
