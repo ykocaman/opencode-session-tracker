@@ -210,7 +210,7 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
         )}
       </For>
       <Show when={expiredSessions()?.length > 0}>
-        <box flexDirection="row" gap={2} marginTop={1} onMouseDown={() => setHistoryExpanded(!historyExpanded())}>
+        <box flexDirection="row" gap={0} marginTop={1} onMouseDown={() => setHistoryExpanded(!historyExpanded())}>
           <text fg="gray">{historyExpanded() ? "[-] " : "[+] "}</text>
           <text fg="gray"><b>History</b></text>
         </box>
