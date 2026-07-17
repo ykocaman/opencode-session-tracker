@@ -181,6 +181,7 @@ function sendQuestionMessage(flow: QuestionFlow) {
   const num = flow.questions.length > 1 ? ` *(${flow.currentIndex + 1}/${flow.questions.length})*` : '';
   const msg = `📌 *${flow.title}*${num}\n\n${q.question}`;
   
+  // Send to all allowed users and persist messageId/chatId back to disk
   allowedUsers.forEach(async (userId) => {
       try {
         const sent = await bot?.sendMessage(userId, msg, {
@@ -190,8 +191,10 @@ function sendQuestionMessage(flow: QuestionFlow) {
         if (sent) {
            flow.messageId = sent.message_id;
            flow.chatId = sent.chat.id;
+           // Persist messageId and chatId back to disk
+           qfMap.set(flow.requestId, flow);
         }
-      } catch(e) {}
+      } catch(e) { console.error('[Telegram] sendQuestionMessage error:', e); }
   });
 }
 

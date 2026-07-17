@@ -521,7 +521,7 @@ export function buildStatusFromParts(parts: any[]): string {
       }
     } else if (p.type === 'tool' || p.type === 'tool_call') {
       const name = p.tool || p.name || '';
-      const input = p.state?.input?.command || p.state?.input?.CommandLine || p.input || '';
+      const input = p.state?.input ?? p.input ?? {};
       const status = p.state?.status || (p.type === 'tool_call' ? 'running' : 'complete');
       lines.push(formatToolLine(name, input, status));
     }
