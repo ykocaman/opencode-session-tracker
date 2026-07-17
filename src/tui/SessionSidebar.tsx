@@ -192,7 +192,7 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
         <box flexGrow={1}>
           <text fg="white"><b>Sessions</b></text>
         </box>
-        <text fg="cyan" onMouseDown={() => api.route.navigate("home")}>[Home]</text>
+        <text fg="magenta" onMouseDown={() => api.route.navigate("home")}>[Home]</text>
       </box>
       <Show when={activeSessions().length === 0 && expiredSessions().length === 0}>
         <text fg="gray">No sessions found</text>
@@ -210,7 +210,7 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
         )}
       </For>
       <Show when={expiredSessions()?.length > 0}>
-        <box flexDirection="row" gap={1} marginTop={1} onMouseDown={() => setHistoryExpanded(!historyExpanded())}>
+        <box flexDirection="row" gap={2} marginTop={1} onMouseDown={() => setHistoryExpanded(!historyExpanded())}>
           <text fg="gray">{historyExpanded() ? "[-] " : "[+] "}</text>
           <text fg="gray"><b>History</b></text>
         </box>
