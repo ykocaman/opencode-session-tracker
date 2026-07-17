@@ -412,6 +412,7 @@ function cleanCommand(cmd: string): string {
 
 function getToolInputLabel(name: string, input: any): string {
   if (!input) return '';
+  const n = name.toLowerCase();
   
   let obj: any = null;
   if (typeof input === 'object') {
@@ -426,9 +427,15 @@ function getToolInputLabel(name: string, input: any): string {
   }
   
   if (obj) {
-    if (name === 'bash' || name === 'run_command' || name === 'execute_command') {
+    if (n === 'bash' || n === 'run_command' || n === 'execute_command') {
       const cmdVal = String(obj.CommandLine || obj.command || obj.cmd || '');
       return cleanCommand(cmdVal);
+    }
+    
+    // Question / ask tool — extract question text
+    if (n === 'question' || n === 'ask' || n === 'ask_question') {
+      const qText = obj.question || obj.text || obj.title || obj.prompt || '';
+      return String(qText).slice(0, 80) || 'Question';
     }
     
     // Case-insensitive key check for paths/files
@@ -444,10 +451,10 @@ function getToolInputLabel(name: string, input: any): string {
     
     if (pathVal) return cleanPath(pathVal);
   
-    // Case-insensitive key check for queries
+    // Case-insensitive key check for queries/patterns
     const queryKey = keys.find(k => {
       const kl = k.toLowerCase();
-      return kl.includes('query') || kl.includes('pattern') || kl === 'q';
+      return kl.includes('query') || kl.includes('pattern') || kl.includes('glob') || kl === 'q';
     });
     if (queryKey) {
       return String(obj[queryKey]);
@@ -455,7 +462,8 @@ function getToolInputLabel(name: string, input: any): string {
   }
   
   const rawStr = String(input);
-  if (name === 'bash' || name === 'run_command' || name === 'execute_command') {
+  if (rawStr === '[object Object]') return '';
+  if (n === 'bash' || n === 'run_command' || n === 'execute_command') {
     return cleanCommand(rawStr);
   }
   if (rawStr.startsWith('/') || rawStr.includes('/Users/')) {
@@ -492,6 +500,15 @@ export function formatToolLine(name: string, input: any, status: string | undefi
   } else if (normName === 'list_dir' || normName === 'list') {
     icon = '📁';
     actionName = 'List';
+  } else if (normName === 'glob' || normName === 'glob_search') {
+    icon = '🔎';
+    actionName = 'Glob';
+  } else if (normName === 'question' || normName === 'ask' || normName === 'ask_question') {
+    icon = '❓';
+    actionName = 'Asked';
+  } else if (normName === 'generate_image' || normName === 'image') {
+    icon = '🖼️';
+    actionName = 'Image';
   }
 
   const prefix = showCmd 
