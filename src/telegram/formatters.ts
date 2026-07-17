@@ -315,6 +315,32 @@ function cleanPath(p: string): string {
   return cleaned;
 }
 
+function cleanCommand(cmd: string): string {
+  if (!cmd) return '';
+  
+  let cleaned = cmd;
+  
+  // 1. Remove 2>&1
+  cleaned = cleaned.replace(/2>&1/g, '');
+  
+  // 2. Remove | tail -N or | tail
+  cleaned = cleaned.replace(/\|\s*tail(?:\s+-\d+)?/g, '');
+  
+  // 3. Replace home dir with ~
+  const home = os.homedir();
+  const escapedHome = home.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+  const homeRegex = new RegExp(escapedHome, 'g');
+  cleaned = cleaned.replace(homeRegex, '~');
+  
+  // 4. Clean up trailing/excess spaces and pipes
+  cleaned = cleaned.replace(/\s+/g, ' ').trim();
+  if (cleaned.endsWith('|')) {
+    cleaned = cleaned.slice(0, -1).trim();
+  }
+  
+  return cleaned;
+}
+
 function getToolInputLabel(name: string, input: any): string {
   if (!input) return '';
   
@@ -332,7 +358,8 @@ function getToolInputLabel(name: string, input: any): string {
   
   if (obj) {
     if (name === 'bash' || name === 'run_command' || name === 'execute_command') {
-      return String(obj.CommandLine || obj.command || obj.cmd || '');
+      const cmdVal = String(obj.CommandLine || obj.command || obj.cmd || '');
+      return cleanCommand(cmdVal);
     }
     const pathVal = obj.path || obj.file_path || obj.AbsolutePath || obj.TargetFile || obj.filePath || obj.DirectoryPath || obj.dir || obj.SearchPath || '';
     if (pathVal) return cleanPath(String(pathVal));
@@ -342,6 +369,9 @@ function getToolInputLabel(name: string, input: any): string {
   }
   
   const rawStr = String(input);
+  if (name === 'bash' || name === 'run_command' || name === 'execute_command') {
+    return cleanCommand(rawStr);
+  }
   if (rawStr.startsWith('/') || rawStr.includes('/Users/')) {
     return cleanPath(rawStr);
   }

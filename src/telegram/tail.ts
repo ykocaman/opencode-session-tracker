@@ -195,7 +195,15 @@ export function startTailTracking(
           if (role === 'assistant') {
             cleanText = buildStatusFromParts(m.parts || []);
           } else {
-            const rawText = (m.parts || []).filter((p: any) => p.type === 'text').map((p: any) => p.text || '').join('').trim();
+            const rawText = (m.parts || [])
+              .map((p: any) => {
+                if (p.type === 'text') return p.text || '';
+                if (p.type === 'tool_result') return p.content || '';
+                return '';
+              })
+              .filter(Boolean)
+              .join('\n')
+              .trim();
             cleanText = escapeHtml(rawText.length > 300 ? rawText.slice(0, 300) + '...' : rawText);
           }
           
