@@ -858,7 +858,17 @@ async function handleIncomingText(
 ) {
   const targetDir = replyDir || activeProjectDir || apiRef.state.path.directory;
   let currentActive: string | null = null;
-  if (replySessionId) {
+  
+  if (replySessionId && replyDir) {
+    currentActive = replySessionId;
+    updateCurrentSessionId(replySessionId);
+    try {
+      const state = readState();
+      state.activeSessions = state.activeSessions || {};
+      state.activeSessions[replyDir] = replySessionId;
+      writeState(state);
+    } catch (e) {}
+  } else if (replySessionId) {
     currentActive = replySessionId;
   } else {
     try { currentActive = readState().activeSessions?.[targetDir] || null; } catch(e) {}
@@ -889,39 +899,20 @@ async function handleIncomingText(
     }
   }
 
-  // Check if there is already an active tail running for the current active session
-  let existingTailMsgId: number | null = null;
+  // Close any existing active tails for this session so we start a fresh reply-mode stream
   if (currentActive) {
     for (const [msgId, tail] of activeTails.entries()) {
       if (tail.sessionId === currentActive && !tail.isComplete) {
-        existingTailMsgId = msgId;
-        break;
+        tail.isComplete = true;
+        if (tail.timer) clearInterval(tail.timer);
+        activeTails.delete(msgId);
+        
+        bot?.editMessageReplyMarkup({ inline_keyboard: [] }, {
+          chat_id: chatId,
+          message_id: msgId
+        }).catch(() => {});
       }
     }
-  }
-
-  // If a tail is already running, just submit the prompt and let the tail stream it automatically!
-  if (existingTailMsgId !== null && currentActive) {
-    const promptOpts: any = { sessionID: currentActive, parts: [{ type: "text", text }] };
-    if (selectedModel) {
-      promptOpts.model = { providerID: selectedModel.providerID, modelID: selectedModel.modelID };
-    }
-    
-    const isLocal = targetDir === apiRef.state.path.directory;
-    if (isLocal) {
-      apiRef.route.navigate("session", { sessionID: currentActive });
-      apiRef.client.session.prompt(promptOpts).catch(()=>{});
-    } else {
-      updateState('sync', {
-        type: 'prompt',
-        targetDir,
-        sessionId: currentActive,
-        text,
-        model: selectedModel ? { providerID: selectedModel.providerID, modelID: selectedModel.modelID } : undefined,
-        timestamp: Date.now()
-      });
-    }
-    return;
   }
 
   // Otherwise, create a new tail message in reply to the user's prompt
