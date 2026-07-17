@@ -941,7 +941,21 @@ async function handleIncomingText(chatId: number, text: string, replySessionId: 
           if (selectedModel) {
             promptOpts.model = { providerID: selectedModel.providerID, modelID: selectedModel.modelID };
           }
-          apiRef.client.session.prompt(promptOpts).catch(()=>{});
+          
+          const isLocal = targetDir === apiRef.state.path.directory;
+          if (isLocal) {
+            apiRef.route.navigate("session", { sessionID: newSessionId });
+            apiRef.client.session.prompt(promptOpts).catch(()=>{});
+          } else {
+            updateState('sync', {
+              type: 'prompt',
+              targetDir,
+              sessionId: newSessionId,
+              text,
+              model: selectedModel ? { providerID: selectedModel.providerID, modelID: selectedModel.modelID } : undefined,
+              timestamp: Date.now()
+            });
+          }
 
           startPollingPrompt(newSessionId, chatId, trackingMsgId, targetDir, Date.now());
         }
@@ -961,6 +975,7 @@ async function handleIncomingText(chatId: number, text: string, replySessionId: 
 
   const isLocal = targetDir === apiRef.state.path.directory;
   if (isLocal) {
+    apiRef.route.navigate("session", { sessionID: currentActive });
     apiRef.client.session.prompt(promptOpts).catch(()=>{});
   } else {
     updateState('sync', {
