@@ -295,6 +295,20 @@ function collapseDiffHeaders(text: string): string {
   return resultLines.join('\n');
 }
 
+function cleanHorizontalRulesAndSpaces(text: string): string {
+  if (!text) return '';
+  
+  let formatted = text;
+  
+  // 1. Replace horizontal rules with em-dash dividers (lines that are only 3+ dashes/stars/underscores/hr tags)
+  formatted = formatted.replace(/^\s*(?:-{3,}|\*{3,}|_{3,}|&lt;hr&gt;|&lt;hr\s*\/&gt;|<hr>|<hr\s*\/\gt;)\s*$/gm, '──────────────────────────────');
+  
+  // 2. Collapse 3 or more consecutive newlines down to exactly 2 newlines
+  formatted = formatted.replace(/\n{3,}/g, '\n\n');
+  
+  return formatted.trim();
+}
+
 export function escapeHtml(text: string): string {
   const escaped = text
     .replace(/&/g, '&amp;')
@@ -305,7 +319,8 @@ export function escapeHtml(text: string): string {
   const collapsedLsp = collapseLspDiagnostics(collapsedReminders);
   const collapsedHeaders = collapseDiffHeaders(collapsedLsp);
   const tablesFormatted = formatMarkdownTables(collapsedHeaders);
-  return convertMarkdownToHtml(tablesFormatted);
+  const cleanedSpaces = cleanHorizontalRulesAndSpaces(tablesFormatted);
+  return convertMarkdownToHtml(cleanedSpaces);
 }
 
 export function formatThinkingText(text: string): string {
