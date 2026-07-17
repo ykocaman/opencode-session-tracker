@@ -10,11 +10,10 @@ import {
 } from './state';
 import { registerMessageSession, escapeHtml } from './formatters';
 import { getProjectsKeyboard, getSessionsKeyboard, projectIds, sessionIds, modelIds, getSessionStatus } from './keyboards';
-import { startPollingPrompt, startTailTracking, ActiveTracking, TailTracking } from './tracking';
+import { startTailTracking, TailTracking } from './tracking';
 import { handleStart, handleProjectsCommand, handleSessionsCommand, handleHistoryCommand, handleTailCommand, sendAutoRecap, handleHelpCommand } from './commands';
 import { launchOpenCodeInstance } from './launcher';
 
-export const activeTrackings = new Map<string, ActiveTracking>();
 export const activeTails = new Map<number, TailTracking>();
 export const permissionRequests = new Map<string, { sessionId: string, permId: string }>();
 export const pendingQuestions = new Map<string, string>();
@@ -599,36 +598,7 @@ export function startTelegramBot() {
         return;
       }
       
-      let foundSessId: string | null = null;
-      for (const [sessId, t] of activeTrackings.entries()) {
-        if (t.messageId === msgId) {
-          foundSessId = sessId;
-          break;
-        }
-      }
-      
-      if (foundSessId) {
-        const tracking = activeTrackings.get(foundSessId);
-        if (tracking) {
-          tracking.isComplete = true;
-          if (tracking.timer) clearInterval(tracking.timer);
-          activeTrackings.delete(foundSessId);
-          sessionFinalizers.delete(foundSessId);
-          
-          newBot.answerCallbackQuery(query.id, { text: "Tracking stopped." });
-          
-          const finalMsg = tracking.lastText;
-          newBot.editMessageText(finalMsg, {
-            chat_id: query.message.chat.id,
-            message_id: msgId,
-            parse_mode: 'HTML',
-            reply_markup: { inline_keyboard: [] }
-          }).catch(() => {});
-          return;
-        }
-      }
-      
-      newBot.answerCallbackQuery(query.id, { text: "Tracking already stopped or expired." });
+      newBot.answerCallbackQuery(query.id, { text: "Tailing already stopped or expired." });
       newBot.editMessageReplyMarkup({ inline_keyboard: [] }, {
         chat_id: query.message.chat.id,
         message_id: query.message.message_id
@@ -779,7 +749,7 @@ export function startTelegramBot() {
     }
 
     // Treat as prompt input
-    await handleIncomingText(msg.chat.id, text, replySessionId, replyDir);
+    await handleIncomingText(msg.chat.id, text, replySessionId, replyDir, msg.message_id);
   });
 }
 
@@ -879,7 +849,13 @@ async function handleRecapCommand(chatId: number) {
   await sendAutoRecap(chatId, undefined, currentActive);
 }
 
-async function handleIncomingText(chatId: number, text: string, replySessionId: string | null, replyDir: string | null) {
+async function handleIncomingText(
+  chatId: number, 
+  text: string, 
+  replySessionId: string | null, 
+  replyDir: string | null,
+  userMsgId?: number
+) {
   const targetDir = replyDir || activeProjectDir || apiRef.state.path.directory;
   let currentActive: string | null = null;
   if (replySessionId) {
@@ -913,15 +889,54 @@ async function handleIncomingText(chatId: number, text: string, replySessionId: 
     }
   }
 
-  // Generate tracking message and start tracking
-  const sentMsg = await bot?.sendMessage(chatId, "⏳ Sending prompt to session...", {
-    reply_markup: {
-      inline_keyboard: [[{ text: '❌ Stop Tracking', callback_data: `stop_tracking_${Date.now()}` }]]
+  // Check if there is already an active tail running for the current active session
+  let existingTailMsgId: number | null = null;
+  if (currentActive) {
+    for (const [msgId, tail] of activeTails.entries()) {
+      if (tail.sessionId === currentActive && !tail.isComplete) {
+        existingTailMsgId = msgId;
+        break;
+      }
     }
-  });
+  }
+
+  // If a tail is already running, just submit the prompt and let the tail stream it automatically!
+  if (existingTailMsgId !== null && currentActive) {
+    const promptOpts: any = { sessionID: currentActive, parts: [{ type: "text", text }] };
+    if (selectedModel) {
+      promptOpts.model = { providerID: selectedModel.providerID, modelID: selectedModel.modelID };
+    }
+    
+    const isLocal = targetDir === apiRef.state.path.directory;
+    if (isLocal) {
+      apiRef.route.navigate("session", { sessionID: currentActive });
+      apiRef.client.session.prompt(promptOpts).catch(()=>{});
+    } else {
+      updateState('sync', {
+        type: 'prompt',
+        targetDir,
+        sessionId: currentActive,
+        text,
+        model: selectedModel ? { providerID: selectedModel.providerID, modelID: selectedModel.modelID } : undefined,
+        timestamp: Date.now()
+      });
+    }
+    return;
+  }
+
+  // Otherwise, create a new tail message in reply to the user's prompt
+  const replyOpts: any = {};
+  if (userMsgId) replyOpts.reply_to_message_id = userMsgId;
+
+  const sentMsg = await bot?.sendMessage(chatId, "⏳ Starting tail stream...", replyOpts).catch(() => null);
   if (!sentMsg) return;
 
-  const trackingMsgId = sentMsg.message_id;
+  const tailMsgId = sentMsg.message_id;
+
+  // Add the Stop Tracking button on the sent message
+  bot?.editMessageReplyMarkup({
+    inline_keyboard: [[{ text: '❌ Stop Tracking', callback_data: `stop_tracking_${tailMsgId}` }]]
+  }, { chat_id: chatId, message_id: tailMsgId }).catch(() => {});
 
   if (!currentActive) {
     try {
@@ -935,7 +950,7 @@ async function handleIncomingText(chatId: number, text: string, replySessionId: 
           state.activeSessions[targetDir] = newSessionId;
           writeState(state);
 
-          registerMessageSession(trackingMsgId, newSessionId, targetDir);
+          registerMessageSession(tailMsgId, newSessionId, targetDir);
 
           const promptOpts: any = { sessionID: newSessionId, parts: [{ type: "text", text }] };
           if (selectedModel) {
@@ -957,7 +972,7 @@ async function handleIncomingText(chatId: number, text: string, replySessionId: 
             });
           }
 
-          startPollingPrompt(newSessionId, chatId, trackingMsgId, targetDir, Date.now());
+          startTailTracking(newSessionId, chatId, tailMsgId, targetDir);
         }
       }).catch((e: any) => {
         bot?.sendMessage(chatId, `❌ Failed to create session: ${escapeHtml(e.message)}`).catch(() => {});
@@ -966,7 +981,7 @@ async function handleIncomingText(chatId: number, text: string, replySessionId: 
     return;
   }
 
-  registerMessageSession(trackingMsgId, currentActive, targetDir);
+  registerMessageSession(tailMsgId, currentActive, targetDir);
 
   const promptOpts: any = { sessionID: currentActive, parts: [{ type: "text", text }] };
   if (selectedModel) {
@@ -988,5 +1003,5 @@ async function handleIncomingText(chatId: number, text: string, replySessionId: 
     });
   }
 
-  startPollingPrompt(currentActive, chatId, trackingMsgId, targetDir, Date.now());
+  startTailTracking(currentActive, chatId, tailMsgId, targetDir);
 }

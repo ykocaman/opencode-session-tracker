@@ -1,22 +1,11 @@
 import fs from 'fs';
 import { bot, apiRef, readState, writeState, activeProjectDir, sessionFinalizers, lastHistoryMessage, lastSessionsMessage } from './state';
-import { activeTrackings, activeTails } from './bot';
+import { activeTails } from './bot';
 import { getPromptStatusPath } from './state';
 import { buildMessageWithHeaderAndFooter, buildStatusFromParts, escapeHtml, formatThinkingText } from './formatters';
 import { handleTailCommand, handleSessionsCommand, handleHistoryCommand } from './commands';
 import { getSessionsKeyboard } from './keyboards';
 
-export interface ActiveTracking {
-  chatId: number;
-  messageId: number;
-  lastText: string;
-  lastEditAt: number;
-  accumulatedText: string;
-  toolHistory: string[];
-  isComplete: boolean;
-  abortController?: AbortController;
-  timer?: any;
-}
 
 export interface TailTracking {
   sessionId: string;
@@ -102,229 +91,8 @@ export async function getSessionActiveContent(
   };
 }
 
-export function startPollingPrompt(
-  sessionId: string,
-  chatId: number,
-  trackingMessageId: number,
-  directory: string,
-  promptTimestamp: number
-) {
-  for (const [msgId, tail] of activeTails.entries()) {
-    if (tail.sessionId === sessionId && !tail.isComplete) {
-      tail.isComplete = true;
-      if (tail.timer) clearInterval(tail.timer);
-      activeTails.delete(msgId);
-      
-      const finalMsg = tail.lastText;
-      bot?.editMessageText(finalMsg, {
-        chat_id: tail.chatId,
-        message_id: msgId,
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: [] }
-      }).catch(() => {});
-    }
-  }
-
-  const existing = activeTrackings.get(sessionId);
-  if (existing) {
-    existing.isComplete = true;
-    if (existing.timer) clearInterval(existing.timer);
-    activeTrackings.delete(sessionId);
-  }
-
-  const tracking: ActiveTracking = {
-    chatId,
-    messageId: trackingMessageId,
-    lastText: '',
-    lastEditAt: 0,
-    accumulatedText: '',
-    toolHistory: [],
-    isComplete: false,
-    timer: null
-  };
-  activeTrackings.set(sessionId, tracking);
-
-  const EDIT_THROTTLE_MS = 1200;
-  let pendingEdit: ReturnType<typeof setTimeout> | null = null;
-
-  let finalizeRef: (() => void) | null = null;
-  sessionFinalizers.set(sessionId, () => { if (finalizeRef) finalizeRef(); });
-
-  function editMessageDirectly(text: string) {
-    const safeText = text.slice(0, 4000);
-    tracking.lastText = safeText;
-    if (pendingEdit) { clearTimeout(pendingEdit); pendingEdit = null; }
-    bot?.editMessageText(safeText, {
-      chat_id: chatId,
-      message_id: trackingMessageId,
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: tracking.isComplete ? [] : [[{ text: '❌ Stop Tracking', callback_data: `stop_tracking_${trackingMessageId}` }]]
-      }
-    }).catch((err: any) => {
-      const errMsg = err?.message || String(err);
-      if (errMsg.includes("message is not modified")) return;
-      bot?.editMessageText(safeText, {
-        chat_id: chatId,
-        message_id: trackingMessageId,
-        reply_markup: {
-          inline_keyboard: tracking.isComplete ? [] : [[{ text: '❌ Stop Tracking', callback_data: `stop_tracking_${trackingMessageId}` }]]
-        }
-      }).catch(() => {});
-    });
-  }
-
-  function scheduleEdit(text: string) {
-    if (tracking.isComplete) return;
-    const safeText = text.slice(0, 4000);
-    if (safeText === tracking.lastText) return;
-    tracking.lastText = safeText;
-
-    if (pendingEdit) clearTimeout(pendingEdit);
-    const sinceLastEdit = Date.now() - tracking.lastEditAt;
-    const delay = sinceLastEdit >= EDIT_THROTTLE_MS ? 0 : EDIT_THROTTLE_MS - sinceLastEdit;
-
-    pendingEdit = setTimeout(() => {
-      if (tracking.isComplete && tracking.lastText === safeText) return;
-      tracking.lastEditAt = Date.now();
-      bot?.editMessageText(safeText, {
-        chat_id: chatId,
-        message_id: trackingMessageId,
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: tracking.isComplete ? [] : [[{ text: '❌ Stop Tracking', callback_data: `stop_tracking_${trackingMessageId}` }]]
-        }
-      }).catch((err: any) => {
-        const errMsg = err?.message || String(err);
-        if (errMsg.includes("message is not modified")) return;
-        bot?.editMessageText(safeText, {
-          chat_id: chatId,
-          message_id: trackingMessageId,
-          reply_markup: {
-            inline_keyboard: tracking.isComplete ? [] : [[{ text: '❌ Stop Tracking', callback_data: `stop_tracking_${trackingMessageId}` }]]
-          }
-        }).catch(() => {});
-      });
-    }, delay);
-  }
-
-  editMessageDirectly('⏳ Processing...');
-
-  async function finalizeTracking() {
-    if (tracking.isComplete) return;
-    tracking.isComplete = true;
-    if (pendingEdit) { clearTimeout(pendingEdit); pendingEdit = null; }
-    if (tracking.timer) { clearInterval(tracking.timer); tracking.timer = null; }
-    activeTrackings.delete(sessionId);
-    sessionFinalizers.delete(sessionId);
-
-    // Clear pendingPrompt from state
-    try {
-      const ns = readState();
-      if (ns.pendingPrompt?.sessionId === sessionId) {
-        delete ns.pendingPrompt;
-        writeState(ns);
-      }
-    } catch(e) {}
-
-    try {
-      const msgsRes = await apiRef.client.session.messages({ sessionID: sessionId, limit: 10 });
-      const msgs = (msgsRes?.data || msgsRes || []) as any[];
-      const lastAssistant = [...msgs].reverse().find((m: any) => {
-        const role = (m.info || m).role;
-        if (role !== 'assistant') return false;
-        const t = (m.parts || []).filter((p: any) => p.type === 'text').map((p: any) => p.text || '').join('').trim();
-        return t.length > 0;
-      });
-
-      if (lastAssistant) {
-        const allParts = lastAssistant.parts || [];
-        let rendered = '';
-        for (const p of allParts) {
-          if (p.type === 'text') {
-            const t = (p.text || '').trim();
-            if (t) rendered += escapeHtml(t) + '\n\n';
-          } else if (p.type === 'reasoning') {
-            const t = (p.text || '').trim();
-            if (t) rendered += `🧠 <i>Thinking: ${escapeHtml(formatThinkingText(t))}</i>\n\n`;
-          } else if (p.type === 'tool') {
-            const name = p.tool || '';
-            const input = (p.state?.input?.command || p.state?.input?.CommandLine || '').trim();
-            const escInput = escapeHtml(input);
-            rendered += (name === 'bash' || name === 'execute_command' || name === 'run_command')
-              ? `<code>$ ${escInput.slice(0, 200)}</code>\n`
-              : `⚡ <code>${name}</code>\n`;
-            const output = (p.state?.metadata?.output || '').trim();
-            if (output) {
-              const escOutput = escapeHtml(output);
-              rendered += `<pre>${escOutput.slice(0, 1000)}</pre>\n\n`;
-            }
-          } else if (p.type === 'tool_call') {
-            const name = p.name || '';
-            const input = (p.input || '').trim();
-            const escInput = escapeHtml(input);
-            rendered += (name === 'bash' || name === 'execute_command' || name === 'run_command')
-              ? `<code>$ ${escInput.slice(0, 200)}</code>\n`
-              : `⚡ <code>${name}</code>\n`;
-          } else if (p.type === 'tool_result') {
-            const content = (p.content || '').trim();
-            if (content && content.length < 200) rendered += `${escapeHtml(content)}\n`;
-          }
-        }
-
-        const display = rendered.trim();
-        const d = display.length > 3000 ? display.slice(0, 3000) + '\n\n<i>...truncated</i>' : display;
-
-        const finalText = await buildMessageWithHeaderAndFooter(sessionId, d, lastAssistant, promptTimestamp);
-        editMessageDirectly(finalText);
-        
-        // Auto-refresh sessions menus when prompt finishes
-        if (lastSessionsMessage) {
-          const sessKb = await getSessionsKeyboard(false);
-          bot?.editMessageReplyMarkup({ inline_keyboard: sessKb }, { chat_id: lastSessionsMessage.chatId, message_id: lastSessionsMessage.messageId }).catch(() => {});
-        }
-        if (lastHistoryMessage) {
-          const histKb = await getSessionsKeyboard(true);
-          bot?.editMessageReplyMarkup({ inline_keyboard: histKb }, { chat_id: lastHistoryMessage.chatId, message_id: lastHistoryMessage.messageId }).catch(() => {});
-        }
-        await new Promise(r => setTimeout(r, 1500));
-      }
-    } catch(e) {
-      console.error('[Telegram] finalizeTracking error:', e);
-    }
-  }
-
-  finalizeRef = () => { finalizeTracking().catch(() => {}); };
-
-  tracking.timer = setInterval(async () => {
-    try {
-      if (tracking.isComplete) return;
-      const { activeText, lastAssistant, statusType } = await getSessionActiveContent(sessionId, directory);
-
-      if (statusType === 'idle') {
-        await finalizeTracking();
-        return;
-      }
-
-      const formattedMsg = await buildMessageWithHeaderAndFooter(sessionId, activeText, lastAssistant, promptTimestamp);
-      scheduleEdit(formattedMsg);
-    } catch (err) {
-      console.error('[Telegram] Polling interval error:', err);
-    }
-  }, 1500);
-
-  setTimeout(() => {
-    if (!tracking.isComplete) {
-      finalizeTracking().catch(() => {});
-    }
-  }, 60 * 60 * 1000);
-}
-
 export function notifySessionIdle(sessionId: string) {
-  const finalize = sessionFinalizers.get(sessionId);
-  if (finalize) {
-    finalize();
-  }
+  // No-op since prompt tracking is removed in favor of persistent tail logs
 }
 
 export function startTailTracking(
@@ -333,21 +101,6 @@ export function startTailTracking(
   trackingMessageId: number,
   directory: string
 ) {
-  const existingPrompt = activeTrackings.get(sessionId);
-  if (existingPrompt && !existingPrompt.isComplete) {
-    existingPrompt.isComplete = true;
-    if (existingPrompt.timer) clearInterval(existingPrompt.timer);
-    activeTrackings.delete(sessionId);
-    sessionFinalizers.delete(sessionId);
-    
-    const finalMsg = existingPrompt.lastText;
-    bot?.editMessageText(finalMsg, {
-      chat_id: existingPrompt.chatId,
-      message_id: existingPrompt.messageId,
-      parse_mode: 'HTML',
-      reply_markup: { inline_keyboard: [] }
-    }).catch(() => {});
-  }
 
   const tracking: TailTracking = {
     sessionId,
