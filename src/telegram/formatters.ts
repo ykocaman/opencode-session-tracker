@@ -75,13 +75,86 @@ function convertMarkdownToHtml(text: string): string {
   return formatted;
 }
 
+function parseAndFormatTable(tableLines: string[]): string {
+  const headers = tableLines[0]
+    .split('|')
+    .map(h => h.trim())
+    .filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
+    
+  const dataRows: string[] = [];
+  for (let i = 2; i < tableLines.length; i++) {
+    const cells = tableLines[i]
+      .split('|')
+      .map(c => c.trim())
+      .filter((_, idx, arr) => idx > 0 && idx < arr.length - 1);
+      
+    if (cells.length === 0) continue;
+    
+    let rowText = '';
+    for (let j = 0; j < headers.length; j++) {
+      const header = headers[j] || `Col ${j + 1}`;
+      const value = cells[j] || '-';
+      
+      if (header.replace(/[-:]/g, '') === '') continue;
+      
+      rowText += `  <b>${header}:</b> ${value}\n`;
+    }
+    if (rowText) {
+      dataRows.push(`▪️\n${rowText.trimEnd()}`);
+    }
+  }
+  
+  return dataRows.join('\n\n');
+}
+
+function formatMarkdownTables(text: string): string {
+  if (!text) return '';
+  
+  const lines = text.split('\n');
+  const resultLines: string[] = [];
+  let inTable = false;
+  let tableLines: string[] = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    
+    if (trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      inTable = true;
+      tableLines.push(trimmed);
+      continue;
+    }
+    
+    if (inTable) {
+      inTable = false;
+      if (tableLines.length >= 3) {
+        resultLines.push(parseAndFormatTable(tableLines));
+      } else {
+        resultLines.push(...tableLines);
+      }
+      tableLines = [];
+    }
+    
+    resultLines.push(line);
+  }
+  
+  if (inTable && tableLines.length >= 3) {
+    resultLines.push(parseAndFormatTable(tableLines));
+  } else if (inTable) {
+    resultLines.push(...tableLines);
+  }
+  
+  return resultLines.join('\n');
+}
+
 export function escapeHtml(text: string): string {
   const escaped = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
   const collapsed = collapseDcpBlocks(escaped);
-  return convertMarkdownToHtml(collapsed);
+  const tablesFormatted = formatMarkdownTables(collapsed);
+  return convertMarkdownToHtml(tablesFormatted);
 }
 
 export function formatThinkingText(text: string): string {
@@ -108,6 +181,15 @@ export function formatThinkingText(text: string): string {
   return `${safeFirst}\n...\n${safeLast}`;
 }
 
+function cleanPath(p: string): string {
+  if (!p) return '';
+  const home = os.homedir();
+  if (p.startsWith(home)) {
+    return '~' + p.slice(home.length);
+  }
+  return p;
+}
+
 function getToolInputLabel(name: string, input: any): string {
   if (!input) return '';
   
@@ -127,14 +209,18 @@ function getToolInputLabel(name: string, input: any): string {
     if (name === 'bash' || name === 'run_command' || name === 'execute_command') {
       return String(obj.CommandLine || obj.command || obj.cmd || '');
     }
-    const pathVal = obj.path || obj.file_path || obj.AbsolutePath || obj.TargetFile || obj.filePath || obj.DirectoryPath || obj.dir || '';
-    if (pathVal) return String(pathVal);
-
+    const pathVal = obj.path || obj.file_path || obj.AbsolutePath || obj.TargetFile || obj.filePath || obj.DirectoryPath || obj.dir || obj.SearchPath || '';
+    if (pathVal) return cleanPath(String(pathVal));
+  
     const queryVal = obj.query || obj.q || obj.Query || obj.pattern || '';
     if (queryVal) return String(queryVal);
   }
   
-  return String(input);
+  const rawStr = String(input);
+  if (rawStr.startsWith('/') || rawStr.includes('/Users/')) {
+    return cleanPath(rawStr);
+  }
+  return rawStr;
 }
 
 export function formatToolLine(name: string, input: any, status: string | undefined): string {
