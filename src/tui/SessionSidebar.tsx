@@ -184,9 +184,16 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
   const activeSessions = () => allSessions().filter((s: any) => !s.isExpired);
   const expiredSessions = () => allSessions().filter((s: any) => s.isExpired);
   
+  const [historyExpanded, setHistoryExpanded] = createSignal<boolean>(false);
+
   return (
     <box flexDirection="column" marginTop={1} flexShrink={0}>
-      <text fg="white"><b>Sessions</b></text>
+      <box flexDirection="row" flexShrink={0}>
+        <box flexGrow={1}>
+          <text fg="white"><b>Sessions</b></text>
+        </box>
+        <text fg="cyan" onMouseDown={() => api.route.navigate("home")}>[Home]</text>
+      </box>
       <Show when={activeSessions().length === 0 && expiredSessions().length === 0}>
         <text fg="gray">No sessions found</text>
       </Show>
@@ -203,21 +210,24 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
         )}
       </For>
       <Show when={expiredSessions()?.length > 0}>
-        <box marginTop={1}>
+        <box flexDirection="row" gap={1} marginTop={1} onMouseDown={() => setHistoryExpanded(!historyExpanded())}>
+          <text fg="gray">{historyExpanded() ? "[-] " : "[+] "}</text>
           <text fg="gray"><b>History</b></text>
         </box>
-        <For each={expiredSessions()}>
-          {(session: any) => (
-            <SessionItem 
-              {...session} 
-              currentSessionId={currentSessionId}
-              setCurrentSessionId={setCurrentSessionId}
-              expanded={expanded}
-              toggleExpanded={toggleExpanded}
-              api={api}
-            />
-          )}
-        </For>
+        <Show when={historyExpanded()}>
+          <For each={expiredSessions()}>
+            {(session: any) => (
+              <SessionItem 
+                {...session} 
+                currentSessionId={currentSessionId}
+                setCurrentSessionId={setCurrentSessionId}
+                expanded={expanded}
+                toggleExpanded={toggleExpanded}
+                api={api}
+              />
+            )}
+          </For>
+        </Show>
       </Show>
       <Show when={telegramStatus() === "failed" || (telegramStatus() === "missing" && showTelegramWarning())}>
         <box marginTop={1}>
