@@ -34,6 +34,9 @@ Add the following content (replace with your token and user ID):
 }
 ```
 
+> [!NOTE]
+> After creating or modifying the configuration file, you must restart your OpenCode instance for the changes to take effect.
+
 > [!IMPORTANT]
 > Keep your bot token secure. Anyone with your token can access your bot, but the `allowedUsers` whitelist ensures only *you* can send commands to your OpenCode daemon.
 

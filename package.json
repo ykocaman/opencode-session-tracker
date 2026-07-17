@@ -4,15 +4,15 @@
   "description": "OpenCode TUI plugin & Telegram Companion - Track active sessions/subagents in the sidebar and interact remotely from your phone",
   "type": "module",
   "exports": {
-    "./tui": "./dist/tui.tsx"
+    "./tui": "./dist/index.tsx"
   },
   "files": [
     "dist",
     "README.md"
   ],
   "scripts": {
-    "build": "rm -rf dist && mkdir -p dist && cp src/index.tsx dist/tui.tsx && cp src/telegram.ts dist/telegram.ts",
-    "dev": "node -e \"const f=require('fs'),s=['src/index.tsx','src/telegram.ts'],d=['dist/tui.tsx','dist/telegram.ts'],c=()=>{s.forEach((p,i)=>{try{f.cpSync(p,d[i])}catch(e){}});console.log('built',new Date().toLocaleTimeString())};if(!f.existsSync('dist'))f.mkdirSync('dist');c();s.forEach(p=>f.watch(p,c));console.log('watching...')\"",
+    "build": "rm -rf dist && cp -R src dist",
+    "dev": "node -e \"const f=require('fs'),c=()=>{try{f.cpSync('src','dist',{recursive:true});console.log('built',new Date().toLocaleTimeString())}catch(e){}};if(!f.existsSync('dist'))f.mkdirSync('dist');c();f.watch('src',{recursive:true},c);console.log('watching...')\"",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -38,6 +38,8 @@
     "solid-js": "^1.9.14"
   },
   "devDependencies": {
-    "@types/node-telegram-bot-api": "^0.64.15"
+    "@types/node-telegram-bot-api": "^0.64.15",
+    "tsup": "^8.5.1",
+    "typescript": "^7.0.2"
   }
 }
