@@ -212,6 +212,46 @@ function collapseSystemReminders(text: string): string {
   return resultLines.join('\n').trim();
 }
 
+function collapseLspDiagnostics(text: string): string {
+  if (!text) return '';
+  
+  const lines = text.split('\n');
+  const resultLines: string[] = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    
+    if (trimmed.startsWith('# lsp_diagnostics') || trimmed.startsWith('### lsp_diagnostics') || trimmed.includes('lsp_diagnostics')) {
+      const pathMatch = trimmed.match(/filePath=([^\]\s]+)/);
+      if (pathMatch) {
+        const rawPath = pathMatch[1];
+        const cleanP = cleanPath(rawPath);
+        
+        // Peek next line for "No diagnostics found"
+        const nextLine = lines[i + 1];
+        if (nextLine && nextLine.trim().includes('No diagnostics found')) {
+          resultLines.push(`🔎 <b>LSP:</b> <code>${cleanP}</code> (Clean)`);
+          i++; // Skip "No diagnostics found" line
+          
+          // Skip subsequent empty lines or timestamps
+          while (i + 1 < lines.length && (lines[i + 1].trim() === '' || /^\d{1,2}:\d{2}\s*(?:AM|PM)?$/i.test(lines[i + 1].trim()))) {
+            i++;
+          }
+          continue;
+        } else {
+          resultLines.push(`🔎 <b>LSP Diagnostics:</b> <code>${cleanP}</code>`);
+          continue;
+        }
+      }
+    }
+    
+    resultLines.push(line);
+  }
+  
+  return resultLines.join('\n').trim();
+}
+
 export function escapeHtml(text: string): string {
   const escaped = text
     .replace(/&/g, '&amp;')
@@ -219,7 +259,8 @@ export function escapeHtml(text: string): string {
     .replace(/>/g, '&gt;');
   const collapsedDcp = collapseDcpBlocks(escaped);
   const collapsedReminders = collapseSystemReminders(collapsedDcp);
-  const tablesFormatted = formatMarkdownTables(collapsedReminders);
+  const collapsedLsp = collapseLspDiagnostics(collapsedReminders);
+  const tablesFormatted = formatMarkdownTables(collapsedLsp);
   return convertMarkdownToHtml(tablesFormatted);
 }
 
@@ -249,19 +290,29 @@ export function formatThinkingText(text: string): string {
 
 function cleanPath(p: string): string {
   if (!p) return '';
+  let cleaned = p;
   const projectDir = activeProjectDir || apiRef.state.path.directory || '';
   if (projectDir && p.startsWith(projectDir)) {
     let relative = p.slice(projectDir.length);
     if (relative.startsWith('/') || relative.startsWith('\\')) {
       relative = relative.slice(1);
     }
-    return relative || '.';
+    cleaned = relative || '.';
+  } else {
+    const home = os.homedir();
+    if (p.startsWith(home)) {
+      cleaned = '~' + p.slice(home.length);
+    }
   }
-  const home = os.homedir();
-  if (p.startsWith(home)) {
-    return '~' + p.slice(home.length);
+  
+  // Middle shorten if path exceeds 45 characters
+  if (cleaned.length > 45) {
+    const head = cleaned.slice(0, 15);
+    const tail = cleaned.slice(-27);
+    cleaned = `${head}...${tail}`;
   }
-  return p;
+  
+  return cleaned;
 }
 
 function getToolInputLabel(name: string, input: any): string {
