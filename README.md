@@ -1,14 +1,14 @@
-# OpenCode Session Tracker (v2.0.0)
+# OpenCode Session Tracker
 
 [![npm version](https://img.shields.io/npm/v/opencode-session-tracker.svg?style=flat-square)](https://www.npmjs.com/package/opencode-session-tracker)
 [![npm downloads](https://img.shields.io/npm/dm/opencode-session-tracker.svg?style=flat-square)](https://www.npmjs.com/package/opencode-session-tracker)
 [![GitHub stars](https://img.shields.io/github/stars/ykocaman/opencode-session-tracker?style=flat-square)](https://github.com/ykocaman/opencode-session-tracker/stargazers)
 
-A lightweight, robust TUI sidebar extension and interactive **Telegram Companion** for [OpenCode](https://github.com/sst/opencode) that brings real-time session tracking, multi-process routing, and remote monitoring directly to your terminal and phone.
+A lightweight, robust TUI sidebar extension and interactive **Telegram Integration** for [OpenCode](https://github.com/sst/opencode) that brings real-time session tracking, multi-process routing, and remote monitoring directly to your terminal and phone.
 
 ---
 
-## 📱 Telegram Companion (New in v2.0.0)
+## 📱 Telegram Integration
 
 Monitor and drive your terminal agents remotely from your mobile device. When active, you can send instructions, receive live HTML-styled updates, answer interactive questions, and authorize agent commands without touching your computer.
 

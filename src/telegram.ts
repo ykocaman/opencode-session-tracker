@@ -17,6 +17,7 @@ let isLeader = false;
 let leaderInterval: any = null;
 let lastSessionsMessage: { chatId: number, messageId: number, timestamp: number } | null = null;
 let lastProjectsMessage: { chatId: number, messageId: number, timestamp: number } | null = null;
+let lastHistoryMessage: { chatId: number, messageId: number, timestamp: number } | null = null;
 
 // Active SSE subscriptions keyed by sessionId.
 // Each entry has an abort function and the tracking message info.
@@ -92,6 +93,39 @@ function formatThinkingText(text: string): string {
 const permissionRequests = new Map<string, { sessionId: string, permId: string }>();
 const pendingQuestions = new Map<string, string>();
 const projectIds = new Map<string, string>();
+
+export function getTelegramStatus(): string {
+  try {
+    const config = loadConfig();
+    if (!config) return 'missing';
+    const state = readState();
+    return state.telegramStatus || 'ok';
+  } catch(e) {
+    return 'failed';
+  }
+}
+
+function registerMessageSession(messageId: number, sessionId: string, directory: string) {
+  try {
+    const state = readState();
+    state.messageSessions = state.messageSessions || {};
+    state.messageSessions[messageId] = { sessionId, directory, timestamp: Date.now() };
+    
+    // Clean up older mappings to avoid growing infinitely (keep last 200)
+    const keys = Object.keys(state.messageSessions);
+    if (keys.length > 200) {
+      const items = keys.map(k => ({ key: k, ts: state.messageSessions[k].timestamp || 0 }));
+      items.sort((a, b) => b.ts - a.ts);
+      const toKeep = items.slice(0, 200).map(i => i.key);
+      const newMap: Record<string, any> = {};
+      for (const k of toKeep) {
+        newMap[k] = state.messageSessions[k];
+      }
+      state.messageSessions = newMap;
+    }
+    writeState(state);
+  } catch(e) {}
+}
 
 function buildFooter(sData: any): string {
   if (!sData) return '';
@@ -477,26 +511,29 @@ function cancelQuestionFlow(flow: QuestionFlow) {
 }
 
 export async function triggerSessionsMenuUpdate(chatId?: number) {
-    if (!lastSessionsMessage) {
-       const state = readState();
-       if (state.lastSessionsMessage) {
-           lastSessionsMessage = state.lastSessionsMessage;
-       } else {
-           return;
-       }
+    const state = readState();
+    if (!lastSessionsMessage && state.lastSessionsMessage) {
+       lastSessionsMessage = state.lastSessionsMessage;
+    }
+    if (!lastHistoryMessage && state.lastHistoryMessage) {
+       lastHistoryMessage = state.lastHistoryMessage;
     }
     
-    // If we are not the leader, tell the leader to update the menu via IPC
-    if (!isLeader) {
-        updateState('menuUpdateTimestamp', Date.now());
-        return;
+    if (lastSessionsMessage) {
+      const targetChatId = chatId || lastSessionsMessage.chatId;
+      try {
+          const sessKb = await getSessionsKeyboard(false);
+          bot?.editMessageReplyMarkup({ inline_keyboard: sessKb }, { chat_id: targetChatId, message_id: lastSessionsMessage.messageId }).catch(() => {});
+      } catch(e) {}
     }
     
-    const targetChatId = chatId || lastSessionsMessage!.chatId;
-    try {
-        const sessKb = await getSessionsKeyboard();
-        bot?.editMessageReplyMarkup({ inline_keyboard: sessKb }, { chat_id: targetChatId, message_id: lastSessionsMessage!.messageId }).catch(() => {});
-    } catch(e) {}
+    if (lastHistoryMessage) {
+      const targetChatId = chatId || lastHistoryMessage.chatId;
+      try {
+          const sessKb = await getSessionsKeyboard(true);
+          bot?.editMessageReplyMarkup({ inline_keyboard: sessKb }, { chat_id: targetChatId, message_id: lastHistoryMessage.messageId }).catch(() => {});
+      } catch(e) {}
+    }
 }
 
 export function registerPermissionRequest(sessionId: string, permId: string): string {
@@ -829,7 +866,12 @@ function stopTelegramBot() {
 function startTelegramBot() {
   if (bot) return;
   const config = loadConfig();
-  if (!config) return;
+  if (!config) {
+    updateState('telegramStatus', 'missing');
+    return;
+  }
+
+  updateState('telegramStatus', 'ok');
 
   const state = readState();
   if (state.lastSessionsMessage) {
@@ -838,11 +880,15 @@ function startTelegramBot() {
   if (state.lastProjectsMessage) {
     lastProjectsMessage = state.lastProjectsMessage;
   }
+  if (state.lastHistoryMessage) {
+    lastHistoryMessage = state.lastHistoryMessage;
+  }
   bot = new TelegramBot(config.token, { polling: true });
   (globalThis as any).__sessionTrackerBot = bot;
 
   bot.on('polling_error', (error: any) => {
     console.error("[Telegram] Polling error:", error.code, error.message);
+    updateState('telegramStatus', 'failed');
     try {
       fs.appendFileSync(path.join(os.homedir(), 'telegram-polling-error.log'), `${new Date().toISOString()} - ${error.code} - ${error.message}\n`);
     } catch(e) {}
@@ -850,6 +896,7 @@ function startTelegramBot() {
 
   bot.on('error', (error: any) => {
     console.error("[Telegram] General error:", error?.message || String(error));
+    updateState('telegramStatus', 'failed');
     try {
       fs.appendFileSync(path.join(os.homedir(), 'telegram-polling-error.log'), `${new Date().toISOString()} - GENERAL ERROR - ${error?.message || String(error)}\n`);
     } catch(e) {}
@@ -892,6 +939,11 @@ function startTelegramBot() {
     await handleSessionsCommand(msg.chat.id);
   });
 
+  bot.onText(/^\/history/, async (msg) => {
+    if (!allowedUsers.includes(msg.chat.id)) return;
+    await handleHistoryCommand(msg.chat.id);
+  });
+
   bot.onText(/^\/start/, async (msg) => {
     if (!allowedUsers.includes(msg.chat.id)) return;
     bot?.sendMessage(msg.chat.id, "👋 OpenCode Telegram Bot Connected!\n\nUse /projects to select a project, and /sessions to view contexts.");
@@ -908,21 +960,36 @@ function startTelegramBot() {
 
     const text = msg.text.trim();
 
+    // Check if this is a reply to a known session message
+    let replySessionId: string | null = null;
+    let replyDir: string | null = null;
+    if (msg.reply_to_message) {
+      try {
+        const state = readState();
+        const mapped = state.messageSessions?.[msg.reply_to_message.message_id];
+        if (mapped) {
+          replySessionId = mapped.sessionId;
+          replyDir = mapped.directory;
+          logDebug(`[bot.on('message')] Reply detected. Routing to session=${replySessionId} dir=${replyDir}`);
+        }
+      } catch(e) {}
+    }
+
     if (text.startsWith('/')) {
       // Known bot-level commands are handled by their own onText handlers above
-      const knownCommands = ['/projects', '/sessions', '/models', '/recap', '/help', '/start'];
+      const knownCommands = ['/projects', '/sessions', '/models', '/recap', '/help', '/start', '/history'];
       if (knownCommands.some(c => text === c || text.startsWith(c + ' '))) return;
 
       // Check if it's a registered OpenCode slash command
       try {
-        const dir = activeProjectDir || apiRef.state.path.directory;
+        const dir = replyDir || activeProjectDir || apiRef.state.path.directory;
         const cmdRes = await apiRef.client.command.list({ location: { directory: dir } });
         const commands: any[] = (cmdRes?.data?.data || cmdRes?.data || []);
         const slashName = text.startsWith('/') ? text.slice(1).split(/\s+/)[0] : '';
         const matched = commands.find((c: any) => c.name === slashName);
         if (matched) {
           logDebug(`[bot.on('message')] Dispatching OpenCode slash command: /${slashName}`);
-          await handleIncomingText(msg.chat.id, msg.message_id, text);
+          await handleIncomingText(msg.chat.id, msg.message_id, text, replySessionId, replyDir);
           return;
         }
       } catch(e) {
@@ -938,7 +1005,7 @@ function startTelegramBot() {
     }
 
     logDebug(`[bot.on('message')] chatId=${msg.chat.id} text="${text}"`);
-    await handleIncomingText(msg.chat.id, msg.message_id, text);
+    await handleIncomingText(msg.chat.id, msg.message_id, text, replySessionId, replyDir);
   });
 
   bot.on('callback_query', async (query) => {
@@ -946,9 +1013,11 @@ function startTelegramBot() {
     if (!query.data || !query.message) return;
 
     if (query.data.startsWith('nav_')) {
-      // Reject if this is not the latest sessions message
-      if (lastSessionsMessage && query.message.message_id !== lastSessionsMessage.messageId) {
-        bot?.answerCallbackQuery(query.id, { text: "Menu outdated. Send /sessions again." });
+      // Reject if this is not the latest sessions message OR latest history message
+      const isSessionsMsg = lastSessionsMessage && query.message.message_id === lastSessionsMessage.messageId;
+      const isHistoryMsg = lastHistoryMessage && query.message.message_id === lastHistoryMessage.messageId;
+      if (!isSessionsMsg && !isHistoryMsg) {
+        bot?.answerCallbackQuery(query.id, { text: "Menu outdated. Send /sessions or /history again." });
         return;
       }
       const targetId = query.data.replace('nav_', '');
@@ -962,14 +1031,17 @@ function startTelegramBot() {
          state.activeSessions[targetDir] = sId;
          writeState(state);
 
-        bot?.answerCallbackQuery(query.id, { text: "Session switched." });
-        
-        try {
-          if (lastSessionsMessage && lastSessionsMessage.chatId === query.message.chat.id) {
-              const sessKb = await getSessionsKeyboard();
-              bot?.editMessageReplyMarkup({ inline_keyboard: sessKb }, { chat_id: lastSessionsMessage.chatId, message_id: lastSessionsMessage.messageId }).catch(() => {});
-          }
-        } catch(e) {}
+         bot?.answerCallbackQuery(query.id, { text: "Session switched." });
+         
+         try {
+           if (isSessionsMsg) {
+              const sessKb = await getSessionsKeyboard(false);
+              bot?.editMessageReplyMarkup({ inline_keyboard: sessKb }, { chat_id: lastSessionsMessage!.chatId, message_id: lastSessionsMessage!.messageId }).catch(() => {});
+           } else if (isHistoryMsg) {
+              const sessKb = await getSessionsKeyboard(true);
+              bot?.editMessageReplyMarkup({ inline_keyboard: sessKb }, { chat_id: lastHistoryMessage!.chatId, message_id: lastHistoryMessage!.messageId }).catch(() => {});
+           }
+         } catch(e) {}
       } catch (e) {
         bot?.answerCallbackQuery(query.id, { text: "Failed to navigate" });
       }
@@ -991,15 +1063,27 @@ function startTelegramBot() {
              // Only auto-update sessions if the sessions message was sent after this projects message
              if (lastSessionsMessage && lastSessionsMessage.chatId === query.message.chat.id &&
                  lastProjectsMessage && lastSessionsMessage.timestamp > lastProjectsMessage.timestamp) {
-                 const sessKb = await getSessionsKeyboard();
+                 const sessKb = await getSessionsKeyboard(false);
                  try {
                    await bot?.editMessageReplyMarkup({ inline_keyboard: sessKb }, { chat_id: lastSessionsMessage.chatId, message_id: lastSessionsMessage.messageId });
                  } catch(e) {
                    bot?.deleteMessage(lastSessionsMessage.chatId, lastSessionsMessage.messageId).catch(()=>{});
                    lastSessionsMessage = null;
                    await handleSessionsCommand(query.message.chat.id);
-                }
-            }
+                 }
+             }
+             
+             if (lastHistoryMessage && lastHistoryMessage.chatId === query.message.chat.id &&
+                 lastProjectsMessage && lastHistoryMessage.timestamp > lastProjectsMessage.timestamp) {
+                 const histKb = await getSessionsKeyboard(true);
+                 try {
+                   await bot?.editMessageReplyMarkup({ inline_keyboard: histKb }, { chat_id: lastHistoryMessage.chatId, message_id: lastHistoryMessage.messageId });
+                 } catch(e) {
+                   bot?.deleteMessage(lastHistoryMessage.chatId, lastHistoryMessage.messageId).catch(()=>{});
+                   lastHistoryMessage = null;
+                   await handleHistoryCommand(query.message.chat.id);
+                 }
+             }
           } catch(e) {}
       } else {
           bot?.answerCallbackQuery(query.id, { text: "Project not found. Run /projects again." });
@@ -1114,7 +1198,15 @@ export function initTelegram(api: any) {
   logDebug('initTelegram called');
   apiRef = api;
   const config = loadConfig();
-  if (!config) return;
+  if (!config) {
+    updateState('telegramStatus', 'missing');
+    return;
+  }
+  
+  const state = readState();
+  if (state.telegramStatus === 'missing') {
+    updateState('telegramStatus', 'ok');
+  }
 
   allowedUsers = config.allowedUsers;
   
@@ -1180,7 +1272,7 @@ async function getProjectsKeyboard() {
   return inlineKeyboard;
 }
 
-async function getSessionsKeyboard() {
+async function getSessionsKeyboard(showHistory: boolean = false) {
   const queryDir = activeProjectDir || apiRef.state.path.directory;
   let sessions: any[] = [];
   
@@ -1218,15 +1310,17 @@ async function getSessionsKeyboard() {
   }
 
   const now = Date.now();
-  const MAX_AGE = 30 * 24 * 60 * 60 * 1000; // 30 days
+  const EXPIRY_MS = 24 * 60 * 60 * 1000;
+  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+  
   sessions = sessions.filter((s: any) => {
     if (s.status === "deleted") return false;
     if (!s.title || s.title.trim() === "") return false;
     const updatedTime = typeof s.time?.updated === 'number' ? s.time.updated : 0;
-    return now - updatedTime < MAX_AGE;
+    return now - updatedTime < WEEK_MS;
   });
 
-  console.log(`[Telegram] Filtered sessions (last 7 days, non-deleted, with title): ${sessions.length}`);
+  console.log(`[Telegram] Filtered sessions: ${sessions.length}`);
 
   const sessionsMap = new Map();
   sessions.forEach((s: any) => {
@@ -1262,13 +1356,22 @@ async function getSessionsKeyboard() {
       return (b.time?.updated || 0) - (a.time?.updated || 0);
   });
 
+  const filteredParents = parents.filter((p: any) => {
+    const updatedTime = typeof p.time?.updated === 'number' ? p.time.updated : 0;
+    const isExpired = now - updatedTime >= EXPIRY_MS;
+    return showHistory ? isExpired : !isExpired;
+  });
+
   const inlineKeyboard: any[][] = [];
   let currentActive = null;
   try { currentActive = readState().activeSessions?.[queryDir] || null; } catch(e) {}
-  const isHomeSelected = currentActive === null;
-  inlineKeyboard.push([{ text: `${isHomeSelected ? '→ ' : ''}🏠 Home (New Session)`, callback_data: "nav_home" }]);
   
-  parents.slice(0, 15).forEach((p: any) => {
+  if (!showHistory) {
+    const isHomeSelected = currentActive === null;
+    inlineKeyboard.push([{ text: `${isHomeSelected ? '→ ' : ''}🏠 Home (New Session)`, callback_data: "nav_home" }]);
+  }
+  
+  filteredParents.slice(0, 15).forEach((p: any) => {
     const isCurrent = currentActive === p.id;
     const st = getSessionStatus(p.id);
     const ball = statusIcon(st);
@@ -1317,7 +1420,7 @@ async function handleSessionsCommand(chatId: number) {
     if (lastSessionsMessage) {
       let txt = "🗂 Sessions:";
       try {
-        const staleKb = await getSessionsKeyboard();
+        const staleKb = await getSessionsKeyboard(false);
         if (staleKb.length > 0) {
           txt += '\n' + staleKb.map(row => row[0].text).join('\n');
         }
@@ -1325,7 +1428,7 @@ async function handleSessionsCommand(chatId: number) {
       bot?.editMessageText(txt, { chat_id: lastSessionsMessage.chatId, message_id: lastSessionsMessage.messageId }).catch(() => {});
     }
     
-    const inlineKeyboard = await getSessionsKeyboard();
+    const inlineKeyboard = await getSessionsKeyboard(false);
     const sentMsg = await bot?.sendMessage(chatId, "🗂 Sessions:", {
       reply_markup: {
         inline_keyboard: inlineKeyboard
@@ -1337,6 +1440,34 @@ async function handleSessionsCommand(chatId: number) {
     }
   } catch (err) {
     bot?.sendMessage(chatId, "❌ Failed to list sessions.").catch(() => {});
+  }
+}
+
+async function handleHistoryCommand(chatId: number) {
+  try {
+    if (lastHistoryMessage) {
+      let txt = "📜 History Sessions:";
+      try {
+        const staleKb = await getSessionsKeyboard(true);
+        if (staleKb.length > 0) {
+          txt += '\n' + staleKb.map(row => row[0].text).join('\n');
+        }
+      } catch(e) {}
+      bot?.editMessageText(txt, { chat_id: lastHistoryMessage.chatId, message_id: lastHistoryMessage.messageId }).catch(() => {});
+    }
+    
+    const inlineKeyboard = await getSessionsKeyboard(true);
+    const sentMsg = await bot?.sendMessage(chatId, "📜 History Sessions:", {
+      reply_markup: {
+        inline_keyboard: inlineKeyboard
+      }
+    });
+    if (sentMsg) {
+       lastHistoryMessage = { chatId: sentMsg.chat.id, messageId: sentMsg.message_id, timestamp: Date.now() };
+       updateState('lastHistoryMessage', lastHistoryMessage);
+    }
+  } catch (err) {
+    bot?.sendMessage(chatId, "❌ Failed to list history sessions.").catch(() => {});
   }
 }
 
@@ -1424,6 +1555,8 @@ async function handleRecapCommand(chatId: number) {
   try {
     const statusMsg = await bot?.sendMessage(chatId, "⏳ Generating recap...");
     if (!statusMsg) return;
+    
+    registerMessageSession(statusMsg.message_id, currentActive, targetDir);
     
     const timeoutId = setTimeout(() => {
       bot?.editMessageText("*Recap timed out. Try again.*", { chat_id: chatId, message_id: statusMsg.message_id, parse_mode: 'Markdown' }).catch(() => {});
@@ -1880,7 +2013,13 @@ export function notifySessionIdle(sessionId: string) {
   }
 }
 
-async function handleIncomingText(chatId: number, messageId: number | undefined, text: string) {
+async function handleIncomingText(
+  chatId: number,
+  messageId: number | undefined,
+  text: string,
+  replySessionId?: string | null,
+  replyDir?: string | null
+) {
   logDebug(`[handleIncomingText] start: chatId=${chatId} text="${text}"`);
   try {
     for (const flow of qfMap.values()) {
@@ -1899,9 +2038,13 @@ async function handleIncomingText(chatId: number, messageId: number | undefined,
       }
     }
 
-    const targetDir = activeProjectDir || apiRef.state.path.directory;
+    const targetDir = replyDir || activeProjectDir || apiRef.state.path.directory;
     let currentActive: string | null = null;
-    try { currentActive = readState().activeSessions?.[targetDir] || null; } catch(e) {}
+    if (replySessionId) {
+      currentActive = replySessionId;
+    } else {
+      try { currentActive = readState().activeSessions?.[targetDir] || null; } catch(e) {}
+    }
 
     let sessionId: string | null = currentActive;
 
@@ -1928,6 +2071,10 @@ async function handleIncomingText(chatId: number, messageId: number | undefined,
     }).catch(() => null);
 
     const promptTimestamp = Date.now();
+
+    if (trackingMsg) {
+      registerMessageSession(trackingMsg.message_id, sessionId, targetDir);
+    }
 
     const isLocal = (targetDir === apiRef.state.path.directory);
 
@@ -2010,9 +2157,13 @@ export async function sendAutoRecap(chatId: number, messageId: number | undefine
     const displayText = responseText.length > 3500 ? responseText.slice(0, 3500) + "\n\n_...truncated_" : responseText;
     
     let footer = "";
+    let dir = apiRef.state.path.directory;
     try {
       const sRes = await apiRef.client.session.get({ sessionID: sessionId });
       footer = buildFooter(sRes?.data || sRes);
+      if (sRes?.data?.directory || sRes?.directory) {
+        dir = sRes.data?.directory || sRes.directory;
+      }
     } catch(e) {}
     
     let title = "Session";
@@ -2024,7 +2175,10 @@ export async function sendAutoRecap(chatId: number, messageId: number | undefine
     const replyOpts: any = { parse_mode: 'Markdown' };
     if (messageId) replyOpts.reply_to_message_id = messageId;
     
-    bot?.sendMessage(chatId, `📝 **${title}**\n\n${displayText}${footer}`, replyOpts).catch(() => {});
+    const sentMsg = await bot?.sendMessage(chatId, `📝 **${title}**\n\n${displayText}${footer}`, replyOpts).catch(() => null);
+    if (sentMsg) {
+      registerMessageSession(sentMsg.message_id, sessionId, dir);
+    }
   } catch(e) {}
 }
 

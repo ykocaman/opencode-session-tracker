@@ -1,10 +1,11 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiPlugin, TuiPluginModule, TuiPluginApi, TuiSlotProps } from "@opencode-ai/plugin/tui";
 import { createResource, onCleanup, For, Show, createSignal } from "solid-js";
-import { initTelegram, updateCurrentSessionId, notifyTelegram, notifyTelegramQuestion, registerQuestionRequest, registerPermissionRequest, triggerSessionsMenuUpdate, saveSessionStatus, saveSessionModel, saveSessionAgent, savePromptStatus, savePromptResponse, notifySessionIdle, updatePromptResponseMeta, logDebug } from "./telegram";
+import { initTelegram, getTelegramStatus, updateCurrentSessionId, notifyTelegram, notifyTelegramQuestion, registerQuestionRequest, registerPermissionRequest, triggerSessionsMenuUpdate, saveSessionStatus, saveSessionModel, saveSessionAgent, savePromptStatus, savePromptResponse, notifySessionIdle, updatePromptResponseMeta, logDebug } from "./telegram";
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { exec } from 'child_process';
 
 const statusSignals = new Map<string, ReturnType<typeof createSignal<string>>>();
 
@@ -22,6 +23,7 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
   updateCurrentSessionId(props.session_id || null);
   const [expanded, setExpanded] = createSignal<Set<string>>(new Set());
   const [currentSessionId, setCurrentSessionId] = createSignal<string | undefined>(props.session_id);
+  const [telegramStatus, setTelegramStatus] = createSignal<string>(getTelegramStatus());
 
   const toggleExpanded = (id: string) => {
       const newSet = new Set(expanded());
@@ -44,6 +46,7 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
   
   const interval = setInterval(() => {
     refetch();
+    setTelegramStatus(getTelegramStatus());
     // Sync active session from route (slot session_id may not be reactive)
     const currentRoute = api.route.current as any;
     if (currentRoute.name === "session" && currentRoute.params?.sessionID) {
@@ -225,6 +228,13 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
     );
   };
   
+  const openUrl = (url: string) => {
+    try {
+      const start = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+      exec(`${start} ${url}`);
+    } catch(e) {}
+  };
+  
   const allSessions = () => displaySessions() || [];
   const activeSessions = () => allSessions().filter((s: any) => !s.isExpired);
   const expiredSessions = () => allSessions().filter((s: any) => s.isExpired);
@@ -245,6 +255,13 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
         <For each={expiredSessions()}>
           {(session: any) => <SessionItem {...session} />}
         </For>
+      </Show>
+      <Show when={telegramStatus() === "failed" || telegramStatus() === "missing"}>
+        <box marginTop={1}>
+          <text fg="red" onMouseDown={() => openUrl("https://github.com/ykocaman/opencode-session-tracker/blob/main/docs/telegram-setup.md")}>
+            ⚠️ Telegram integration failed
+          </text>
+        </box>
       </Show>
     </box>
   );
