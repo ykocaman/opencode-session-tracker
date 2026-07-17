@@ -1,6 +1,6 @@
 # Telegram Bot Setup Guide
 
-The Telegram Companion allows you to monitor and control your OpenCode sessions, run prompts, receive live progress updates, answer questions, and approve command permissions directly from your phone.
+The Telegram Integration allows you to monitor and control your OpenCode sessions, run prompts, receive live progress updates, answer questions, and approve command permissions directly from your phone.
 
 ---
 

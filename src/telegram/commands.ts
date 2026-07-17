@@ -7,7 +7,7 @@ import { getProjectsKeyboard, getSessionsKeyboard } from './keyboards';
 import { startTailTracking } from './tracking';
 
 export async function handleStart(chatId: number) {
-  bot?.sendMessage(chatId, "👋 Welcome to OpenCode Telegram Companion! Remote session manager is active.");
+  bot?.sendMessage(chatId, "👋 Welcome to OpenCode Telegram Integration! Remote session manager is active.");
 }
 
 export async function handleProjectsCommand(chatId: number) {
@@ -175,7 +175,7 @@ export async function sendAutoRecap(chatId: number, messageId: number | undefine
 }
 
 export async function handleHelpCommand(chatId: number) {
-  const helpText = `📖 <b>OpenCode Companion Help</b>\n\n` +
+  const helpText = `📖 <b>OpenCode Integration Help</b>\n\n` +
     `/projects - List workspace projects\n` +
     `/sessions - List active sessions\n` +
     `/tail - Watch live session execution\n` +
