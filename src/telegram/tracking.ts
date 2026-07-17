@@ -206,9 +206,9 @@ export function startTailTracking(
         }
       });
 
-      // Keep only the last 5 messages in history to fit Telegram's character limits nicely
-      if (messageOrder.length > 5) {
-        const toRemove = messageOrder.length - 5;
+      // Keep only the last 1 message in history (the last user prompt)
+      if (messageOrder.length > 1) {
+        const toRemove = messageOrder.length - 1;
         for (let i = 0; i < toRemove; i++) {
           const id = messageOrder.shift();
           if (id) messageCache.delete(id);

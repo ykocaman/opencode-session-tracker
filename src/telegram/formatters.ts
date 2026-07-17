@@ -173,7 +173,13 @@ export function buildStatusFromParts(parts: any[]): string {
   const textContent = textParts.map(p => p.text || '').join('').trim();
   if (textContent) {
     const esc = escapeHtml(textContent);
-    lines.push(esc.length > 3000 ? '...' + esc.slice(-3000) : esc);
+    let truncated = esc;
+    if (esc.length > 3000) {
+      const head = esc.slice(0, 300);
+      const tail = esc.slice(-2650);
+      truncated = `${head}\n\n... <i>(truncated)</i> ...\n\n${tail}`;
+    }
+    lines.push(truncated);
   }
 
   return lines.join('\n\n').trim();
