@@ -72,21 +72,33 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
       
       sessions.sort((a: any, b: any) => (b.time?.updated || 0) - (a.time?.updated || 0));
       
-      const parents = sessions.filter((s: any) => !s.parentID);
-      const parentMap = new Map();
-      parents.forEach((p: any) => {
-          p.subagents = [];
-          parentMap.set(p.id, p);
+      const sessionsMap = new Map();
+      sessions.forEach((s: any) => {
+          s.subagents = [];
+          sessionsMap.set(s.id, s);
       });
-      
-      sessions.filter((s: any) => s.parentID).forEach((s: any) => {
-          const parent = parentMap.get(s.parentID);
-          if (parent) {
-              parent.subagents.push(s);
+
+      const findUltimateParent = (s: any) => {
+          let current = s;
+          let lastVisible = null;
+          const visited = new Set();
+          while (current.parentID && !visited.has(current.id)) {
+              visited.add(current.id);
+              const parent = sessionsMap.get(current.parentID);
+              if (!parent) break;
+              lastVisible = parent;
+              current = parent;
+          }
+          return lastVisible;
+      };
+
+      const parents: any[] = [];
+      sessions.forEach((s: any) => {
+          const p = findUltimateParent(s);
+          if (p) {
+              p.subagents.push(s);
           } else {
-              s.subagents = [];
-              parents.push(s); 
-              parentMap.set(s.id, s);
+              parents.push(s);
           }
       });
       
