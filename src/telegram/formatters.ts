@@ -544,7 +544,7 @@ export function buildStatusFromParts(parts: any[]): string {
       if (normName === 'question' || normName === 'ask' || normName === 'ask_question') {
         const status = p.state?.status || (p.type === 'tool_call' ? 'running' : 'complete');
         const icon = status === 'running' ? '⏳' : status === 'complete' ? '✅' : '❌';
-        lines.push(`❓ <code>Soru soruldu</code> ${icon}`);
+        lines.push(`❓ <code>Question asked</code> ${icon}`);
       } else {
         const input = p.state?.input ?? p.input ?? {};
         const status = p.state?.status || (p.type === 'tool_call' ? 'running' : 'complete');
