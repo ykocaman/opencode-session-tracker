@@ -424,36 +424,52 @@ export function startTailTracking(
   let lastActivityTimestamp = Date.now();
   let lastFormattedContent = '';
 
+  const messageCache = new Map<string, { role: string, text: string }>();
+  let messageOrder: string[] = [];
+
   tracking.timer = setInterval(async () => {
     try {
       if (tracking.isComplete) return;
       const { activeText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant } = await getSessionActiveContent(sessionId, directory);
 
-      let formattedHistory = '';
-      const historySlice = historyMsgs.slice(-3);
-      for (let i = 0; i < historySlice.length; i++) {
-        const m = historySlice[i];
-        const role = (m.info || m).role;
-        let cleanText = '';
-        const isLastHist = (i === historySlice.length - 1);
-        
-        if (role === 'assistant' && isLastHist) {
-          cleanText = buildStatusFromParts(m.parts || []);
-        } else {
-          const rawText = (m.parts || []).filter((p: any) => p.type === 'text').map((p: any) => p.text || '').join('').trim();
-          cleanText = escapeHtml(rawText.length > 300 ? rawText.slice(0, 300) + '...' : rawText);
+      // Add new history messages to our local cache
+      historyMsgs.forEach((m: any) => {
+        const msgId = m.id || m.requestID || String(m.time?.updated || m.timeUpdated || Math.random());
+        if (!messageCache.has(msgId)) {
+          const role = (m.info || m).role;
+          let cleanText = '';
+          
+          if (role === 'assistant') {
+            cleanText = buildStatusFromParts(m.parts || []);
+          } else {
+            const rawText = (m.parts || []).filter((p: any) => p.type === 'text').map((p: any) => p.text || '').join('').trim();
+            cleanText = escapeHtml(rawText.length > 300 ? rawText.slice(0, 300) + '...' : rawText);
+          }
+          
+          if (cleanText) {
+            messageCache.set(msgId, { role, text: cleanText });
+            messageOrder.push(msgId);
+          }
         }
-        
-        if (!cleanText) continue;
+      });
 
-        if (role === 'user') {
-          formattedHistory += `👤 ${cleanText}\n\n`;
-        } else if (role === 'assistant') {
-          formattedHistory += `🤖 ${cleanText}\n\n`;
-        } else {
-          formattedHistory += `❓ ${cleanText}\n\n`;
+      // Keep only the last 5 messages in history to fit Telegram's character limits nicely
+      if (messageOrder.length > 5) {
+        const toRemove = messageOrder.length - 5;
+        for (let i = 0; i < toRemove; i++) {
+          const id = messageOrder.shift();
+          if (id) messageCache.delete(id);
         }
       }
+
+      let formattedHistory = '';
+      messageOrder.forEach((msgId) => {
+        const cached = messageCache.get(msgId);
+        if (cached) {
+          const icon = cached.role === 'user' ? '👤' : (cached.role === 'assistant' ? '🤖' : '❓');
+          formattedHistory += `${icon} ${cached.text}\n\n`;
+        }
+      });
 
       let formattedActive = '';
       if (statusType !== 'idle' || lastMsgIsAssistant) {
