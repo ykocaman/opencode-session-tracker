@@ -2,7 +2,7 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { apiRef, bot, readState, activeProjectDir, setActiveProjectDir, lastProjectsMessage, setLastProjectsMessage, lastSessionsMessage, setLastSessionsMessage, lastHistoryMessage, setLastHistoryMessage } from './state';
-import { registerMessageSession, buildFooter, escapeHtml } from './formatters';
+import { registerMessageSession, escapeHtml, buildMessageWithHeaderAndFooter } from './formatters';
 import { getProjectsKeyboard, getSessionsKeyboard } from './keyboards';
 import { startTailTracking } from './tail';
 
@@ -130,49 +130,93 @@ export async function handleTailCommand(chatId: number, sessionIdParam?: string 
   }
 }
 
-export async function sendAutoRecap(chatId: number, messageId: number | undefined, sessionId: string) {
+export async function sendRecap(chatId: number, messageId: number | undefined, sessionId: string) {
   try {
-    const msgsRes = await apiRef.client.session.messages({ sessionID: sessionId, limit: 10 });
+    const [msgsRes, sRes] = await Promise.all([
+      apiRef.client.session.messages({ sessionID: sessionId, limit: 20 }),
+      apiRef.client.session.get({ sessionID: sessionId }).catch(() => null)
+    ]);
     const messages = msgsRes?.data || msgsRes || [];
     const msgList = Array.isArray(messages) ? messages : [];
-    
-    const lastAssistant = [...msgList].reverse().find((m: any) => {
+    const sData = sRes?.data || sRes;
+    const dir = sData?.directory || apiRef.state.path.directory;
+
+    const assistants = [...msgList].reverse().filter((m: any) => {
       const role = (m.info || m).role;
       return role === "assistant";
-    });
-    
-    if (!lastAssistant) return;
-    
-    const responseText = (lastAssistant.parts || [])
-      .filter((p: any) => p.type === "text")
-      .map((p: any) => p.text || "")
-      .join("")
-      .trim();
-    
-    if (!responseText) return;
-    
-    const displayText = responseText.length > 3500 ? responseText.slice(0, 3500) + "\n\n_...truncated_" : responseText;
-    
-    let footer = "";
-    let dir = apiRef.state.path.directory;
-    try {
-      const sRes = await apiRef.client.session.get({ sessionID: sessionId });
-      footer = buildFooter(sRes?.data || sRes);
-      if (sRes?.data?.directory || sRes?.directory) {
-        dir = sRes.data?.directory || sRes.directory;
+    }).slice(0, 2);
+
+    if (assistants.length === 0) return;
+
+    const lastAssistant = assistants[0];
+    const prevAssistant = assistants[1];
+
+    const buildAssistantText = (msg: any) =>
+      (msg.parts || [])
+        .filter((p: any) => p.type === "text")
+        .map((p: any) => p.text || "")
+        .join("")
+        .trim();
+
+    let content = buildAssistantText(lastAssistant);
+    if (prevAssistant) {
+      const prevText = buildAssistantText(prevAssistant);
+      if (prevText) {
+        content = `${prevText}\n\n${content}`;
       }
-    } catch(e) {}
-    
-    let title = "Session";
-    try {
-      const sData = (await apiRef.client.session.get({ sessionID: sessionId }))?.data;
-      if (sData?.title) title = sData.title;
-    } catch(e) {}
-    
-    const replyOpts: any = { parse_mode: 'Markdown' };
+    }
+
+    if (!content) return;
+
+    let userText = '';
+    let promptTimestamp = Date.now();
+    for (let i = msgList.length - 1; i >= 0; i--) {
+      const m = msgList[i];
+      if ((m.info || m).role === 'assistant') {
+        for (let j = i - 1; j >= 0; j--) {
+          const pm = msgList[j];
+          if ((pm.info || pm).role === 'user') {
+            userText = (pm.content || '').trim() ||
+              (pm.parts || [])
+                .filter((p: any) => p.type === "text")
+                .map((p: any) => p.text || "")
+                .join("")
+                .trim();
+            if (userText) {
+              const pTime = pm.time?.created || pm.timeCreated || pm.time?.updated || pm.timeUpdated;
+              if (pTime) {
+                const num = Number(pTime);
+                promptTimestamp = num < 10000000000 ? num * 1000 : num;
+              }
+            }
+            break;
+          }
+        }
+        break;
+      }
+    }
+
+    const escapedContent = escapeHtml(content).trim();
+
+    const maxLen = 3500;
+    let bodyHtml = escapedContent;
+    if (userText) {
+      const shortUser = escapeHtml(userText.length > 200 ? userText.slice(0, 200) + '...' : userText);
+      bodyHtml = `👤 ${shortUser}\n\n${escapedContent}`;
+      if (bodyHtml.length > maxLen) {
+        const keep = maxLen - `👤 ${shortUser}\n\n`.length - 30;
+        bodyHtml = `👤 ${shortUser}\n\n<i>... (truncated) ...</i>\n\n` + escapedContent.slice(-keep);
+      }
+    } else if (bodyHtml.length > maxLen) {
+      bodyHtml = '<i>... (truncated) ...</i>\n\n' + escapedContent.slice(-(maxLen - 30));
+    }
+
+    const finalText = await buildMessageWithHeaderAndFooter(sessionId, bodyHtml, lastAssistant, promptTimestamp);
+
+    const replyOpts: any = { parse_mode: 'HTML' };
     if (messageId) replyOpts.reply_to_message_id = messageId;
-    
-    const sentMsg = await bot?.sendMessage(chatId, `📝 **${title}**\n\n${displayText}${footer}`, replyOpts).catch(() => null);
+
+    const sentMsg = await bot?.sendMessage(chatId, finalText, replyOpts).catch(() => null);
     if (sentMsg) {
       registerMessageSession(sentMsg.message_id, sessionId, dir);
     }

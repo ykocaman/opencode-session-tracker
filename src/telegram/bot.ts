@@ -9,9 +9,9 @@ import {
   sessionFinalizers, saveSessionModel
 } from './state';
 import { registerMessageSession, escapeHtml } from './formatters';
-import { getProjectsKeyboard, getSessionsKeyboard, projectIds, sessionIds, modelIds, getSessionStatus } from './keyboards';
+import { getProjectsKeyboard, getSessionsKeyboard, projectIds, sessionIds, modelIds } from './keyboards';
 import { startTailTracking, TailTracking } from './tail';
-import { handleStart, handleProjectsCommand, handleSessionsCommand, handleHistoryCommand, handleTailCommand, sendAutoRecap, handleHelpCommand } from './commands';
+import { handleStart, handleProjectsCommand, handleSessionsCommand, handleHistoryCommand, handleTailCommand, sendRecap, handleHelpCommand } from './commands';
 import { launchOpenCodeInstance } from './launcher';
 
 export const activeTails = new Map<number, TailTracking>();
@@ -349,30 +349,6 @@ async function syncLoop() {
         triggerSessionsMenuUpdate();
     }
     
-    if (isLeader && state.pendingRecap) {
-      const { chatId, messageId, sessionId, timestamp: recapTs } = state.pendingRecap;
-      if (recapTs > 0 && (now - recapTs) > 3000) {
-        let shouldFire = false;
-        try {
-          const st = apiRef.state.session.status(sessionId);
-          const type = typeof st === "string" ? st : (st?.type || "");
-          if (type === "idle" || type === "done" || type === "") {
-            shouldFire = true;
-          }
-        } catch(e) {
-          if ((now - recapTs) > 10000) shouldFire = true;
-        }
-        if (shouldFire) {
-          const newState = readState();
-          if (newState.pendingRecap?.sessionId === sessionId) {
-            delete newState.pendingRecap;
-            writeState(newState);
-            sendAutoRecap(chatId, messageId, sessionId);
-          }
-        }
-      }
-    }
-    
     if (fs.existsSync(LOCK_FILE)) {
       try {
         lockData = JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8'));
@@ -593,7 +569,7 @@ export function startTelegramBot() {
         return;
       }
       newBot.answerCallbackQuery(query.id, { text: "Generating recap..." });
-      await sendAutoRecap(query.message.chat.id, undefined, currentActive);
+      await sendRecap(query.message.chat.id, undefined, currentActive);
     } else if (query.data === 'sess_show_question') {
       const queryDir = activeProjectDir || apiRef.state.path.directory;
       let currentActive: string | null = null;
@@ -939,14 +915,7 @@ async function handleRecapCommand(chatId: number) {
     return;
   }
   
-  const status = getSessionStatus(currentActive);
-  if (status !== 'idle' && status !== 'done' && status !== '') {
-    bot?.sendMessage(chatId, `⏳ Recap will be sent automatically as soon as the session stops running...`);
-    updateState('pendingRecap', { chatId, sessionId: currentActive, timestamp: Date.now() });
-    return;
-  }
-  
-  await sendAutoRecap(chatId, undefined, currentActive);
+  await sendRecap(chatId, undefined, currentActive);
 }
 
 async function handleIncomingText(

@@ -311,7 +311,7 @@ function cleanHorizontalRulesAndSpaces(text: string): string {
   let formatted = text;
   
   // 1. Replace horizontal rules with em-dash dividers (lines that are only 3+ dashes/stars/underscores/hr tags)
-  formatted = formatted.replace(/^\s*(?:-{3,}|\*{3,}|_{3,}|&lt;hr&gt;|&lt;hr\s*\/&gt;|<hr>|<hr\s*\/\gt;)\s*$/gm, '──────────────────────────────');
+  formatted = formatted.replace(/^\s*(?:-{3,}|\*{3,}|_{3,}|&lt;hr&gt;|&lt;hr\s*\/&gt;|<hr>|<hr\s*\/\gt;)\s*$/gm, '────────────────────');
   
   // 2. Collapse 3 or more consecutive newlines down to exactly 2 newlines
   formatted = formatted.replace(/\n{3,}/g, '\n\n');
@@ -389,8 +389,7 @@ function cleanCommand(cmd: string): string {
   
   let cleaned = cmd;
   
-  // 1. Remove 2>&1
-  cleaned = cleaned.replace(/2>&1/g, '');
+  cleaned = cleaned.replace(/2>\S*/g, '');
   
   // 2. Remove | tail -N, | tail, | head -N, or | head
   cleaned = cleaned.replace(/\|\s*(?:tail|head)(?:\s+-\d+)?/g, '');
@@ -485,7 +484,7 @@ export function formatToolLine(name: string, input: any, status: string | undefi
   
   if (normName === 'bash' || normName === 'execute_command' || normName === 'run_command') {
     icon = '⚡';
-    actionName = '$';
+    actionName = '';
   } else if (normName === 'read_file' || normName === 'view_file' || normName === 'read') {
     icon = '📄';
     actionName = 'Read';
@@ -512,7 +511,7 @@ export function formatToolLine(name: string, input: any, status: string | undefi
   }
 
   const prefix = showCmd 
-    ? `${icon} <code>${actionName}: ${showCmd}</code>`
+    ? actionName ? `${icon} <code>${actionName}: ${showCmd}</code>` : `${icon} <code>${showCmd}</code>`
     : `${icon} <code>${name}</code>`;
 
   if (status === 'running') {
