@@ -1,7 +1,7 @@
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { apiRef, readState } from './state';
+import { apiRef, readState, activeProjectDir } from './state';
 
 function collapseDcpBlocks(text: string): string {
   if (!text) return '';
@@ -249,6 +249,14 @@ export function formatThinkingText(text: string): string {
 
 function cleanPath(p: string): string {
   if (!p) return '';
+  const projectDir = activeProjectDir || apiRef.state.path.directory || '';
+  if (projectDir && p.startsWith(projectDir)) {
+    let relative = p.slice(projectDir.length);
+    if (relative.startsWith('/') || relative.startsWith('\\')) {
+      relative = relative.slice(1);
+    }
+    return relative || '.';
+  }
   const home = os.homedir();
   if (p.startsWith(home)) {
     return '~' + p.slice(home.length);
