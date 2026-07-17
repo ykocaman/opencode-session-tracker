@@ -265,6 +265,8 @@ function collapseDiffHeaders(text: string): string {
     const editMatch = trimmed.match(/^(?:←\s*)?Edit\s+([^\s:]+)/i);
     const readMatch = trimmed.match(/^(?:←\s*)?Read\s+([^\s:]+)/i);
     const writeMatch = trimmed.match(/^(?:←\s*)?Write\s+([^\s:]+)/i);
+    const grepMatch = trimmed.match(/^(?:[✱★➔]\s*)?Grep\s+(.+?)\s+in\s+(.+)$/i);
+    const grepSimpleMatch = trimmed.match(/^(?:[✱★➔]\s*)?Grep\s+(.+)$/i);
     
     if (editMatch) {
       const cleanP = cleanPath(editMatch[1]);
@@ -277,6 +279,13 @@ function collapseDiffHeaders(text: string): string {
     } else if (writeMatch) {
       const cleanP = cleanPath(writeMatch[1]);
       resultLines.push(`✏️ <b>Write:</b> <code>${cleanP}</code>`);
+      continue;
+    } else if (grepMatch) {
+      const cleanP = cleanPath(grepMatch[2]);
+      resultLines.push(`🔍 <b>Search:</b> <code>${grepMatch[1]}</code> in <code>${cleanP}</code>`);
+      continue;
+    } else if (grepSimpleMatch) {
+      resultLines.push(`🔍 <b>Search:</b> <code>${grepSimpleMatch[1]}</code>`);
       continue;
     }
     
@@ -439,22 +448,23 @@ export function formatToolLine(name: string, input: any, status: string | undefi
 
   let icon = '🔧';
   let actionName = name;
+  const normName = name.toLowerCase();
   
-  if (name === 'bash' || name === 'execute_command' || name === 'run_command') {
+  if (normName === 'bash' || normName === 'execute_command' || normName === 'run_command') {
     icon = '⚡';
     actionName = '$';
-  } else if (name === 'read_file' || name === 'view_file' || name === 'read') {
+  } else if (normName === 'read_file' || normName === 'view_file' || normName === 'read') {
     icon = '📄';
     actionName = 'Read';
-  } else if (name === 'write_file' || name === 'create_file' || name === 'edit_file'
-             || name === 'replace_file_content' || name === 'multi_replace_file_content' 
-             || name === 'write_to_file' || name === 'edit' || name === 'write') {
+  } else if (normName === 'write_file' || normName === 'create_file' || normName === 'edit_file'
+             || normName === 'replace_file_content' || normName === 'multi_replace_file_content' 
+             || normName === 'write_to_file' || normName === 'edit' || normName === 'write') {
     icon = '✏️';
     actionName = 'Write';
-  } else if (name === 'web_search' || name === 'search_web' || name === 'grep_search' || name === 'grep') {
+  } else if (normName === 'web_search' || normName === 'search_web' || normName === 'grep_search' || normName === 'grep') {
     icon = '🔍';
     actionName = 'Search';
-  } else if (name === 'list_dir' || name === 'list') {
+  } else if (normName === 'list_dir' || normName === 'list') {
     icon = '📁';
     actionName = 'List';
   }
