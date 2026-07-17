@@ -34,28 +34,65 @@ export function formatThinkingText(text: string): string {
   return `${safeFirst}\n...\n${safeLast}`;
 }
 
-export function formatToolLine(name: string, input: string, status: string | undefined): string {
-  const cmd = input.split('\n')[0].slice(0, 60);
+function getToolInputLabel(name: string, input: any): string {
+  if (!input) return '';
+  
+  let obj: any = null;
+  if (typeof input === 'object') {
+    obj = input;
+  } else if (typeof input === 'string') {
+    const trimmed = input.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        obj = JSON.parse(trimmed);
+      } catch(e) {}
+    }
+  }
+  
+  if (obj) {
+    if (name === 'bash' || name === 'run_command' || name === 'execute_command') {
+      return String(obj.CommandLine || obj.command || obj.cmd || '');
+    }
+    const pathVal = obj.path || obj.file_path || obj.AbsolutePath || obj.TargetFile || obj.filePath || obj.DirectoryPath || obj.dir || '';
+    if (pathVal) return String(pathVal);
+
+    const queryVal = obj.query || obj.q || obj.Query || obj.pattern || '';
+    if (queryVal) return String(queryVal);
+  }
+  
+  return String(input);
+}
+
+export function formatToolLine(name: string, input: any, status: string | undefined): string {
+  const label = getToolInputLabel(name, input);
+  const cmd = label.split('\n')[0].slice(0, 60);
   const escCmd = escapeHtml(cmd);
-  const hasMore = input.length > 60 || input.includes('\n');
+  const hasMore = label.length > 60 || label.includes('\n');
   const showCmd = escCmd + (hasMore ? '...' : '');
 
   let icon = '🔧';
+  let actionName = name;
+  
   if (name === 'bash' || name === 'execute_command' || name === 'run_command') {
     icon = '⚡';
+    actionName = '$';
   } else if (name === 'read_file' || name === 'view_file') {
     icon = '📄';
+    actionName = 'Read';
   } else if (name === 'write_file' || name === 'create_file' || name === 'edit_file'
-             || name === 'replace_file_content' || name === 'multi_replace_file_content') {
+             || name === 'replace_file_content' || name === 'multi_replace_file_content' || name === 'write_to_file') {
     icon = '✏️';
+    actionName = 'Write';
   } else if (name === 'web_search' || name === 'search_web' || name === 'grep_search') {
     icon = '🔍';
+    actionName = 'Search';
   } else if (name === 'list_dir') {
     icon = '📁';
+    actionName = 'List';
   }
 
-  const prefix = (name === 'bash' || name === 'execute_command' || name === 'run_command')
-    ? `${icon} <code>$ ${showCmd}</code>`
+  const prefix = showCmd 
+    ? `${icon} <code>${actionName}: ${showCmd}</code>`
     : `${icon} <code>${name}</code>`;
 
   if (status === 'running') {
