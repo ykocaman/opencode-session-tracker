@@ -543,7 +543,7 @@ export function buildStatusFromParts(parts: any[]): string {
       // — just show a static indicator here, don't parse the object input
       if (normName === 'question' || normName === 'ask' || normName === 'ask_question') {
         const status = p.state?.status || (p.type === 'tool_call' ? 'running' : 'complete');
-        const icon = status === 'running' ? '⏳' : status === 'complete' ? '✅' : '❌';
+        const icon = status === 'running' ? '⏳' : status === 'error' ? '❌' : '✅';
         lines.push(`❓ <code>Question asked</code> ${icon}`);
       } else {
         const input = p.state?.input ?? p.input ?? {};
