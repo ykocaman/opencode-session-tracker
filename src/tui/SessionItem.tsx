@@ -46,7 +46,7 @@ export function SessionItem(props: SessionItemProps) {
   };
   
   const prefix = props.isSubagent ? (props.isLastSubagent ? " └─ " : " ├─ ") : "";
-  const titleText = props.title?.slice(0, props.isSubagent ? 20 : 23) || props.id.slice(0, 8);
+  const titleText = props.title?.slice(0, props.isSubagent ? 23 : 26) || props.id.slice(0, 8);
   
   return (
     <box flexDirection="row" gap={1} flexShrink={0}>
