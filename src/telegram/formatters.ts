@@ -252,6 +252,40 @@ function collapseLspDiagnostics(text: string): string {
   return resultLines.join('\n').trim();
 }
 
+function collapseDiffHeaders(text: string): string {
+  if (!text) return '';
+  
+  const lines = text.split('\n');
+  const resultLines: string[] = [];
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    
+    const editMatch = trimmed.match(/^(?:←\s*)?Edit\s+([^\s:]+)/i);
+    const readMatch = trimmed.match(/^(?:←\s*)?Read\s+([^\s:]+)/i);
+    const writeMatch = trimmed.match(/^(?:←\s*)?Write\s+([^\s:]+)/i);
+    
+    if (editMatch) {
+      const cleanP = cleanPath(editMatch[1]);
+      resultLines.push(`✏️ <b>Edit:</b> <code>${cleanP}</code>`);
+      continue;
+    } else if (readMatch) {
+      const cleanP = cleanPath(readMatch[1]);
+      resultLines.push(`📄 <b>Read:</b> <code>${cleanP}</code>`);
+      continue;
+    } else if (writeMatch) {
+      const cleanP = cleanPath(writeMatch[1]);
+      resultLines.push(`✏️ <b>Write:</b> <code>${cleanP}</code>`);
+      continue;
+    }
+    
+    resultLines.push(line);
+  }
+  
+  return resultLines.join('\n');
+}
+
 export function escapeHtml(text: string): string {
   const escaped = text
     .replace(/&/g, '&amp;')
@@ -260,7 +294,8 @@ export function escapeHtml(text: string): string {
   const collapsedDcp = collapseDcpBlocks(escaped);
   const collapsedReminders = collapseSystemReminders(collapsedDcp);
   const collapsedLsp = collapseLspDiagnostics(collapsedReminders);
-  const tablesFormatted = formatMarkdownTables(collapsedLsp);
+  const collapsedHeaders = collapseDiffHeaders(collapsedLsp);
+  const tablesFormatted = formatMarkdownTables(collapsedHeaders);
   return convertMarkdownToHtml(tablesFormatted);
 }
 
