@@ -209,17 +209,20 @@ const tui: TuiPlugin = async (api) => {
     }
   });
   
-  api.event.on("question.asked", (e: any) => {
-    // SDK may use e.properties (old) or e.data (new)
+  // Helper to handle both question.asked and question.v2.asked
+  function handleQuestionAsked(e: any, isV2: boolean) {
     const props = e.properties || e.data || {};
     if (props.sessionID && props.questions?.length > 0) {
       updateStatusSafe(props.sessionID, "ask");
       const requestId = props.id;
       registerQuestionRequest(props.sessionID, requestId);
       const title = api.state.session.get(props.sessionID)?.title || props.sessionID.slice(0,8);
-      notifyTelegramQuestion(requestId, props.sessionID, props.questions, title);
+      notifyTelegramQuestion(requestId, props.sessionID, props.questions, title, isV2);
     }
-  });
+  }
+
+  api.event.on("question.asked", (e: any) => handleQuestionAsked(e, false));
+  api.event.on("question.v2.asked", (e: any) => handleQuestionAsked(e, true));
 
   api.event.on("permission.asked", (e: any) => {
     if (e.properties?.sessionID) {

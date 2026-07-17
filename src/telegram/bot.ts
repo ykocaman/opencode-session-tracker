@@ -32,6 +32,7 @@ export interface QuestionFlow {
   messageId?: number;
   chatId?: number;
   title: string;
+  isV2?: boolean;
 }
 
 export const permissionRequests = {
@@ -146,27 +147,14 @@ async function triggerSessionsMenuUpdate() {
   updateState('menuUpdateTimestamp', Date.now());
 }
 
-export function notifyTelegramQuestion(requestId: string, sessionId: string, questions: any[], title: string) {
-    const q = questions[0];
-    let msg = `⚠️ **Question Asked**\nSeans \`${title}\` needs your input!\n\n**${q.question}**`;
-    if (questions.length > 1) {
-       msg += ` *(Question 1 of ${questions.length})*`;
-    }
-    
-    const inlineKeyboard: any[][] = [];
-    if (Array.isArray(q.options) && q.options.length > 0) {
-        q.options.forEach((opt: string) => {
-            inlineKeyboard.push([{ text: opt, callback_data: `q_ans_${opt.slice(0, 30)}` }]);
-        });
-    }
-    inlineKeyboard.push([{ text: "❌ Skip/Cancel", callback_data: "q_cancel" }]);
-    
+export function notifyTelegramQuestion(requestId: string, sessionId: string, questions: any[], title: string, isV2 = false) {
   const flow: QuestionFlow = {
     requestId,
     sessionId,
     questions,
     currentIndex: 0,
-    title
+    title,
+    isV2
   };
   qfMap.set(requestId, flow);
   sendQuestionMessage(flow);
@@ -210,20 +198,25 @@ function submitQuestionFlow(flow: QuestionFlow) {
   try {
     const lastAnswer = flow.questions[flow.currentIndex - 1]?.userAnswer || '';
     // QuestionAnswer = Array<string>, answers = Array<QuestionAnswer>
-    apiRef.client.question.reply({
-       requestID: flow.requestId,
-       answers: flow.questions.map(q => [q.userAnswer || ''])
-    }).catch(()=>{});
+    const replyArgs = {
+      requestID: flow.requestId,
+      answers: flow.questions.map((q: any) => [q.userAnswer || ''])
+    };
+    if (flow.isV2) {
+      // OpenCode >=1.18: use questionV2 API
+      (apiRef.client as any).questionV2?.reply(replyArgs).catch(() => {});
+    } else {
+      apiRef.client.question.reply(replyArgs).catch(() => {});
+    }
     
     const q = flow.questions[flow.questions.length - 1];
     const num = flow.questions.length > 1 ? ` (${flow.questions.length}/${flow.questions.length})` : '';
-    const msg = `✅ *${escapeMarkdown(flow.title)}*${num}\n\n${escapeMarkdown(q.question)}\n\n_Answered: ${escapeMarkdown(lastAnswer)}_`;
+    const msg = `✅ ${flow.title}${num}\n\n${q.question}\n\nAnswered: ${lastAnswer}`;
     
     if (flow.chatId && flow.messageId) {
         bot?.editMessageText(msg, {
            chat_id: flow.chatId,
            message_id: flow.messageId,
-           parse_mode: 'Markdown',
            reply_markup: { inline_keyboard: [] }
         }).catch(() => {});
     }
