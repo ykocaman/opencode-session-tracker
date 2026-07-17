@@ -15,6 +15,8 @@ export interface TailTracking {
   lastEditAt: number;
   isComplete: boolean;
   timer: any;
+  hasStartedRunning?: boolean;
+  startedAt: number;
 }
 
 export async function getSessionActiveContent(
@@ -137,7 +139,9 @@ export function startTailTracking(
     lastText: '',
     lastEditAt: 0,
     isComplete: false,
-    timer: null as any
+    timer: null as any,
+    hasStartedRunning: false,
+    startedAt: Date.now()
   };
   activeTails.set(trackingMessageId, tracking);
 
@@ -161,6 +165,7 @@ export function startTailTracking(
       bot?.editMessageText(safeText, {
         chat_id: chatId,
         message_id: trackingMessageId,
+        parse_mode: 'HTML',
         reply_markup: {
           inline_keyboard: tracking.isComplete ? [] : [[{ text: '❌ Stop Tailing', callback_data: `stop_tracking_${trackingMessageId}` }]]
         }
@@ -274,8 +279,9 @@ export function startTailTracking(
         lastFormattedContent = contentText;
       }
 
-      // Manage duration tracking
+      // Manage duration tracking and track if prompt has started running
       if (statusType !== 'idle') {
+        tracking.hasStartedRunning = true;
         if (!promptStartedAt) {
           promptStartedAt = Date.now();
         }
@@ -297,7 +303,12 @@ export function startTailTracking(
           })()
         : (frozenDuration || '0.0s');
 
-      if (Date.now() - lastActivityTimestamp > 30 * 60 * 1000) {
+      // Finalize tail if session goes idle (and has started running, or has been idle for 15s since tail started)
+      const timeSinceStart = Date.now() - tracking.startedAt;
+      const isSessionCompleted = statusType === 'idle' && (tracking.hasStartedRunning || timeSinceStart > 15000);
+      const isExpired = Date.now() - lastActivityTimestamp > 30 * 60 * 1000;
+
+      if (isSessionCompleted || isExpired) {
         tracking.isComplete = true;
         clearInterval(tracking.timer);
         activeTails.delete(trackingMessageId);
