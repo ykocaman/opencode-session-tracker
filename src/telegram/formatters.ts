@@ -538,9 +538,18 @@ export function buildStatusFromParts(parts: any[]): string {
       }
     } else if (p.type === 'tool' || p.type === 'tool_call') {
       const name = p.tool || p.name || '';
-      const input = p.state?.input ?? p.input ?? {};
-      const status = p.state?.status || (p.type === 'tool_call' ? 'running' : 'complete');
-      lines.push(formatToolLine(name, input, status));
+      const normName = name.toLowerCase();
+      // question/ask tools are sent as separate interactive Telegram messages by notifyTelegramQuestion
+      // — just show a static indicator here, don't parse the object input
+      if (normName === 'question' || normName === 'ask' || normName === 'ask_question') {
+        const status = p.state?.status || (p.type === 'tool_call' ? 'running' : 'complete');
+        const icon = status === 'running' ? '⏳' : status === 'complete' ? '✅' : '❌';
+        lines.push(`❓ <code>Soru soruldu</code> ${icon}`);
+      } else {
+        const input = p.state?.input ?? p.input ?? {};
+        const status = p.state?.status || (p.type === 'tool_call' ? 'running' : 'complete');
+        lines.push(formatToolLine(name, input, status));
+      }
     }
   }
 
