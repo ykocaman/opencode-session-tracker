@@ -26,6 +26,7 @@ export async function getSessionActiveContent(
   statusType: string;
   historyMsgs: any[];
   lastMsgIsAssistant: boolean;
+  calculatedDurationStr?: string;
 }> {
   const msgsRes = await apiRef.client.session.messages({ sessionID: sessionId, limit: 10 }).catch(() => null);
   const msgs = (msgsRes?.data || msgsRes || []) as any[];
@@ -48,6 +49,32 @@ export async function getSessionActiveContent(
       lastMsgIsAssistant = true;
     } else {
       lastAssistant = [...msgs].reverse().find((m: any) => (m.info || m).role === 'assistant') || null;
+    }
+  }
+
+  let lastUserMsg: any = null;
+  if (lastAssistant) {
+    const assistantIndex = msgs.findIndex(m => (m.id || m.requestID) === (lastAssistant.id || lastAssistant.requestID));
+    if (assistantIndex > 0) {
+      lastUserMsg = msgs[assistantIndex - 1];
+    }
+  }
+
+  function getMs(ts: any): number {
+    if (!ts) return 0;
+    const num = Number(ts);
+    if (isNaN(num)) return 0;
+    if (num < 10000000000) return num * 1000;
+    return num;
+  }
+
+  let calculatedDurationStr = '';
+  if (lastAssistant && lastUserMsg) {
+    const startMs = getMs(lastUserMsg.time?.created || lastUserMsg.timeCreated || lastUserMsg.time?.updated || lastUserMsg.timeUpdated);
+    const endMs = getMs(lastAssistant.time?.updated || lastAssistant.timeUpdated || lastAssistant.time?.created || lastAssistant.timeCreated);
+    if (startMs && endMs && endMs >= startMs) {
+      const sec = (endMs - startMs) / 1000;
+      calculatedDurationStr = sec < 60 ? `${sec.toFixed(1)}s` : `${Math.floor(sec/60)}m ${Math.round(sec%60)}s`;
     }
   }
 
@@ -87,7 +114,8 @@ export async function getSessionActiveContent(
     lastAssistant,
     statusType,
     historyMsgs,
-    lastMsgIsAssistant
+    lastMsgIsAssistant,
+    calculatedDurationStr
   };
 }
 
@@ -185,7 +213,7 @@ export function startTailTracking(
   tracking.timer = setInterval(async () => {
     try {
       if (tracking.isComplete) return;
-      const { activeText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant } = await getSessionActiveContent(sessionId, directory);
+      const { activeText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant, calculatedDurationStr } = await getSessionActiveContent(sessionId, directory);
 
       // Add new history messages to our local cache
       historyMsgs.forEach((m: any) => {
@@ -257,6 +285,8 @@ export function startTailTracking(
           const totalSec = (Date.now() - promptStartedAt) / 1000;
           frozenDuration = totalSec < 60 ? `${totalSec.toFixed(1)}s` : `${Math.floor(totalSec/60)}m ${Math.round(totalSec%60)}s`;
           promptStartedAt = null;
+        } else if (calculatedDurationStr) {
+          frozenDuration = calculatedDurationStr;
         }
       }
 

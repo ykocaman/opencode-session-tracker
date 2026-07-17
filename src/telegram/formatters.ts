@@ -575,11 +575,30 @@ export function buildFooter(sData: any): string {
   return parts.length > 0 ? `\n\n_${parts.join(' · ')}_` : '';
 }
 
+export function formatModelName(modelId: string): string {
+  if (!modelId) return '';
+  let name = modelId.split('/').pop() || modelId;
+  const lower = name.toLowerCase();
+  if (lower === 'deepseek-v4-flash') return 'DeepSeek V4 Flash';
+  if (lower === 'deepseek-v4-pro') return 'DeepSeek V4 Pro';
+  if (lower === 'claude-3-5-sonnet') return 'Claude 3.5 Sonnet';
+  
+  return name
+    .split(/[-_]/)
+    .map(word => {
+      if (!word) return '';
+      if (word.toLowerCase() === 'gpt') return 'GPT';
+      if (word.toLowerCase() === 'v4') return 'V4';
+      if (word.toLowerCase() === 'mcp') return 'MCP';
+      return word.charAt(0).toUpperCase() + word.slice(1);
+    })
+    .join(' ');
+}
+
 export function modelName(m: any): string {
   const p = m.providerID || '';
   const id = m.modelID || m.id || '';
-  if (p === 'openrouter') return id.split('/').pop() || id;
-  return id;
+  return formatModelName(id);
 }
 
 export async function buildMessageWithHeaderAndFooter(
@@ -611,7 +630,7 @@ export async function buildMessageWithHeaderAndFooter(
   if (!modelVal) {
     try { modelVal = readState().sessionModels?.[sessionId]?.modelID; } catch(e) {}
   }
-  if (modelVal) metaParts.push(modelVal);
+  if (modelVal) metaParts.push(formatModelName(modelVal));
 
   // Duration
   if (durationOverride) {
