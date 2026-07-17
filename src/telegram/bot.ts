@@ -928,7 +928,7 @@ async function handleIncomingText(
   const replyOpts: any = {};
   if (userMsgId) replyOpts.reply_to_message_id = userMsgId;
 
-  const sentMsg = await bot?.sendMessage(chatId, "⏳ Starting tail stream...", replyOpts).catch(() => null);
+  const sentMsg = await bot?.sendMessage(chatId, "⏳", replyOpts).catch(() => null);
   if (!sentMsg) return;
 
   const tailMsgId = sentMsg.message_id;

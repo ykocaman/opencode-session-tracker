@@ -251,5 +251,5 @@ export function startTailTracking(
     } catch(err) {
       console.error('[Telegram] Tail polling interval error:', err);
     }
-  }, 1500);
+  }, 2000);
 }
