@@ -55,7 +55,7 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
   const displaySessions = () => {
       let sessions = rawSessions() || [];
       const now = Date.now();
-      const EXPIRY_MS = 30 * 60 * 1000; // 30 minutes since last update = expired
+      const EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours since last update = expired
       const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
       
       const isExpired = (s: any) => {
@@ -112,7 +112,7 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
       });
       
       const list: any[] = [];
-      parents.slice(0, 10).forEach((p: any) => {
+      parents.forEach((p: any) => {
           const hasSubs = p.subagents && p.subagents.length > 0;
           list.push({ ...p, isSubagent: false, hasSubagents: hasSubs, isExpired: isExpired(p) });
           
@@ -205,7 +205,7 @@ function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPlugi
               {session.hasSubagents ? (expanded().has(session.id) ? "[-] " : "[+] ") : "[-] "}
             </text>
           </Show>
-          <text fg={session.isExpired ? "gray" : (isCurrent() ? "white" : "gray")} onMouseDown={nav}>{prefix}{titleText}</text>
+          <text fg={isCurrent() ? "white" : "gray"} onMouseDown={nav}>{prefix}{isCurrent() ? <b>{titleText}</b> : titleText}</text>
         </box>
         
         <text fg={session.isExpired ? "gray" : statusColor()} onMouseDown={nav}>{statusIcon()}</text>
