@@ -19,6 +19,10 @@ let lastCreatedTimestamp = 0;
 let lastSyncTimestamp = 0;
 let lastMenuUpdateTimestamp = 0;
 
+// Escape special Markdown v1 chars for Telegram
+function escapeMarkdown(text: string): string {
+  return String(text).replace(/[_*[\]()~`>#+=|{}.!-]/g, (c) => `\\${c}`);
+}
 // Interactive question flow system
 export interface QuestionFlow {
   requestId: string;
@@ -171,15 +175,21 @@ export function notifyTelegramQuestion(requestId: string, sessionId: string, que
 function sendQuestionMessage(flow: QuestionFlow) {
   const q = flow.questions[flow.currentIndex];
   let inlineKeyboard: any[][] = [];
+
   if (Array.isArray(q.options) && q.options.length > 0) {
-      q.options.forEach((opt: string) => {
-          inlineKeyboard.push([{ text: opt, callback_data: `q_ans_${opt.slice(0, 30)}` }]);
-      });
+    q.options.forEach((opt: any, idx: number) => {
+      // QuestionOption = { label: string, description: string }
+      const label = typeof opt === 'string' ? opt : (opt.label || opt.text || String(idx + 1));
+      const desc = typeof opt === 'object' ? (opt.description || '') : '';
+      const btnText = desc ? `${label} — ${desc.slice(0, 40)}` : label;
+      const cbData = `q_ans_${label.slice(0, 30)}`;
+      inlineKeyboard.push([{ text: btnText.slice(0, 64), callback_data: cbData }]);
+    });
   }
   inlineKeyboard.push([{ text: "❌ Skip/Cancel", callback_data: "q_cancel" }]);
   
   const num = flow.questions.length > 1 ? ` *(${flow.currentIndex + 1}/${flow.questions.length})*` : '';
-  const msg = `📌 *${flow.title}*${num}\n\n${q.question}`;
+  const msg = `📌 *${escapeMarkdown(flow.title)}*${num}\n\n${escapeMarkdown(q.question)}`;
   
   // Send to all allowed users and persist messageId/chatId back to disk
   allowedUsers.forEach(async (userId) => {
@@ -201,6 +211,7 @@ function sendQuestionMessage(flow: QuestionFlow) {
 function submitQuestionFlow(flow: QuestionFlow) {
   try {
     const lastAnswer = flow.questions[flow.currentIndex - 1]?.userAnswer || '';
+    // QuestionAnswer = Array<string>, answers = Array<QuestionAnswer>
     apiRef.client.question.reply({
        requestID: flow.requestId,
        answers: flow.questions.map(q => [q.userAnswer || ''])
@@ -208,7 +219,7 @@ function submitQuestionFlow(flow: QuestionFlow) {
     
     const q = flow.questions[flow.questions.length - 1];
     const num = flow.questions.length > 1 ? ` (${flow.questions.length}/${flow.questions.length})` : '';
-    const msg = `✅ *${flow.title}*${num}\n\n${q.question}\n\n_Answered: ${lastAnswer}_`;
+    const msg = `✅ *${escapeMarkdown(flow.title)}*${num}\n\n${escapeMarkdown(q.question)}\n\n_Answered: ${escapeMarkdown(lastAnswer)}_`;
     
     if (flow.chatId && flow.messageId) {
         bot?.editMessageText(msg, {
@@ -711,12 +722,27 @@ export function startTelegramBot() {
       }
     } else if (query.data.startsWith('q_ans_') || query.data === 'q_cancel') {
        let foundFlow: QuestionFlow | null = null;
+       const msgId = query.message?.message_id;
+       const chatId = query.message?.chat?.id;
+
        for (const flow of qfMap.values()) {
-         if (flow.messageId === query.message.message_id) {
+         // Match by messageId (same chat) or by chatId+messageId
+         if (flow.messageId === msgId && flow.chatId === chatId) {
            foundFlow = flow;
            break;
          }
        }
+
+       // Fallback: any flow with matching messageId (multi-user edge case)
+       if (!foundFlow) {
+         for (const flow of qfMap.values()) {
+           if (flow.messageId === msgId) {
+             foundFlow = flow;
+             break;
+           }
+         }
+       }
+
        if (!foundFlow) {
          newBot.answerCallbackQuery(query.id, { text: "Question expired." });
          return;
@@ -729,12 +755,15 @@ export function startTelegramBot() {
        }
        
        const ans = query.data.replace('q_ans_', '');
-       newBot.answerCallbackQuery(query.id, { text: `Answer: ${ans}` });
+       newBot.answerCallbackQuery(query.id, { text: `✅ ${ans}` });
        
        const q = foundFlow.questions[foundFlow.currentIndex];
        q.userAnswer = ans;
-       
        foundFlow.currentIndex++;
+
+       // Persist updated flow back to disk
+       qfMap.set(foundFlow.requestId, foundFlow);
+
        if (foundFlow.currentIndex < foundFlow.questions.length) {
          sendQuestionMessage(foundFlow);
        } else {
