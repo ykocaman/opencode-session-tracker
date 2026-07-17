@@ -48,12 +48,40 @@ function collapseDcpBlocks(text: string): string {
   return resultLines.join('\n').trim();
 }
 
+function convertMarkdownToHtml(text: string): string {
+  if (!text) return '';
+  
+  let formatted = text;
+  
+  // 1. Code blocks: ```language ... ``` -> <pre>...</pre>
+  formatted = formatted.replace(/```(?:[a-zA-Z0-9+#-]+)?\n([\s\S]*?)```/g, '<pre>$1</pre>');
+  formatted = formatted.replace(/```([\s\S]*?)```/g, '<pre>$1</pre>');
+  
+  // 2. Inline code: `code` -> <code>code</code>
+  formatted = formatted.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  
+  // 3. Bold: **bold** -> <b>bold</b>
+  formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>');
+  
+  // 4. Italic: *italic* -> <i>italic</i>
+  formatted = formatted.replace(/\*([^\*\s][^\*]*[^\*\s]|[^\*\s])\*/g, '<i>$1</i>');
+  
+  // 5. Bullet list items: * item -> • item
+  formatted = formatted.replace(/^\s*\*\s+(.+)$/gm, '• $1');
+  
+  // 6. Headers: # Header -> <b>Header</b>
+  formatted = formatted.replace(/^#+\s+(.+)$/gm, '<b>$1</b>');
+  
+  return formatted;
+}
+
 export function escapeHtml(text: string): string {
   const escaped = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-  return collapseDcpBlocks(escaped);
+  const collapsed = collapseDcpBlocks(escaped);
+  return convertMarkdownToHtml(collapsed);
 }
 
 export function formatThinkingText(text: string): string {

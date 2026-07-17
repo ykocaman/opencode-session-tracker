@@ -4,7 +4,7 @@ import os from 'os';
 import { apiRef, bot, readState, activeProjectDir, setActiveProjectDir, lastProjectsMessage, setLastProjectsMessage, lastSessionsMessage, setLastSessionsMessage, lastHistoryMessage, setLastHistoryMessage } from './state';
 import { registerMessageSession, buildFooter, escapeHtml } from './formatters';
 import { getProjectsKeyboard, getSessionsKeyboard } from './keyboards';
-import { startTailTracking } from './tracking';
+import { startTailTracking } from './tail';
 
 export async function handleStart(chatId: number) {
   bot?.sendMessage(chatId, "👋 Welcome to OpenCode Telegram Integration! Remote session manager is active.");

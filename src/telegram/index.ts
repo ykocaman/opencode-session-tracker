@@ -35,7 +35,7 @@ export {
 
 export {
   notifySessionIdle
-} from './tracking';
+} from './tail';
 
 export const initTelegram = init;
 export const getTelegramStatus = () => {

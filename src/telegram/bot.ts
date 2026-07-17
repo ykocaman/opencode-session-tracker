@@ -10,7 +10,7 @@ import {
 } from './state';
 import { registerMessageSession, escapeHtml } from './formatters';
 import { getProjectsKeyboard, getSessionsKeyboard, projectIds, sessionIds, modelIds, getSessionStatus } from './keyboards';
-import { startTailTracking, TailTracking } from './tracking';
+import { startTailTracking, TailTracking } from './tail';
 import { handleStart, handleProjectsCommand, handleSessionsCommand, handleHistoryCommand, handleTailCommand, sendAutoRecap, handleHelpCommand } from './commands';
 import { launchOpenCodeInstance } from './launcher';
 
