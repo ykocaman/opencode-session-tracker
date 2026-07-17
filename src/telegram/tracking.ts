@@ -36,6 +36,7 @@ export async function getSessionActiveContent(
   lastAssistant: any;
   statusType: string;
   historyMsgs: any[];
+  lastMsgIsAssistant: boolean;
 }> {
   const msgsRes = await apiRef.client.session.messages({ sessionID: sessionId, limit: 10 }).catch(() => null);
   const msgs = (msgsRes?.data || msgsRes || []) as any[];
@@ -48,12 +49,14 @@ export async function getSessionActiveContent(
   let activeText = '⏳ Processing...';
   let lastAssistant: any = null;
   let historyMsgs = msgs;
+  let lastMsgIsAssistant = false;
 
   if (msgs.length > 0) {
     const lastMsg = msgs[msgs.length - 1];
     if ((lastMsg.info || lastMsg).role === 'assistant') {
       lastAssistant = lastMsg;
       historyMsgs = msgs.slice(0, -1);
+      lastMsgIsAssistant = true;
     } else {
       lastAssistant = [...msgs].reverse().find((m: any) => (m.info || m).role === 'assistant') || null;
     }
@@ -94,7 +97,8 @@ export async function getSessionActiveContent(
     activeText,
     lastAssistant,
     statusType,
-    historyMsgs
+    historyMsgs,
+    lastMsgIsAssistant
   };
 }
 
@@ -423,7 +427,7 @@ export function startTailTracking(
   tracking.timer = setInterval(async () => {
     try {
       if (tracking.isComplete) return;
-      const { activeText, lastAssistant, statusType, historyMsgs } = await getSessionActiveContent(sessionId, directory);
+      const { activeText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant } = await getSessionActiveContent(sessionId, directory);
 
       let formattedHistory = '';
       const historySlice = historyMsgs.slice(-3);
@@ -452,7 +456,7 @@ export function startTailTracking(
       }
 
       let formattedActive = '';
-      if (statusType !== 'idle') {
+      if (statusType !== 'idle' || lastMsgIsAssistant) {
         formattedActive = `🤖 ${activeText}\n\n`;
       }
 
