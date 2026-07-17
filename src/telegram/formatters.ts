@@ -392,8 +392,8 @@ function cleanCommand(cmd: string): string {
   // 1. Remove 2>&1
   cleaned = cleaned.replace(/2>&1/g, '');
   
-  // 2. Remove | tail -N or | tail
-  cleaned = cleaned.replace(/\|\s*tail(?:\s+-\d+)?/g, '');
+  // 2. Remove | tail -N, | tail, | head -N, or | head
+  cleaned = cleaned.replace(/\|\s*(?:tail|head)(?:\s+-\d+)?/g, '');
   
   // 3. Replace home dir with ~
   const home = os.homedir();
