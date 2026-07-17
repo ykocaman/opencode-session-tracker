@@ -3,11 +3,57 @@ import fs from 'fs';
 import os from 'os';
 import { apiRef, readState } from './state';
 
+function collapseDcpBlocks(text: string): string {
+  if (!text) return '';
+  
+  const lines = text.split('\n');
+  const resultLines: string[] = [];
+  let inDcpBlock = false;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    
+    if (trimmed.includes('▣ DCP |')) {
+      inDcpBlock = true;
+      const details = trimmed.replace('▣ DCP |', '').trim();
+      resultLines.push(`✂️ <b>DCP</b>: ${details}`);
+      continue;
+    }
+    
+    if (inDcpBlock) {
+      // Ignore progress bars, compression lines, topics, items lines, and timestamps
+      if (trimmed.startsWith('│') && trimmed.endsWith('│')) {
+        continue;
+      }
+      if (trimmed.includes('▣ Compression')) {
+        continue;
+      }
+      if (trimmed.startsWith('→ Topic:') || trimmed.startsWith('→ Items:')) {
+        continue;
+      }
+      if (trimmed === '') {
+        continue;
+      }
+      if (/^\d{1,2}:\d{2}\s*(?:AM|PM)?$/i.test(trimmed)) {
+        continue;
+      }
+      
+      inDcpBlock = false;
+    }
+    
+    resultLines.push(line);
+  }
+  
+  return resultLines.join('\n').trim();
+}
+
 export function escapeHtml(text: string): string {
-  return text
+  const escaped = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
+  return collapseDcpBlocks(escaped);
 }
 
 export function formatThinkingText(text: string): string {
