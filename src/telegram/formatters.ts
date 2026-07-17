@@ -396,11 +396,28 @@ function getToolInputLabel(name: string, input: any): string {
       const cmdVal = String(obj.CommandLine || obj.command || obj.cmd || '');
       return cleanCommand(cmdVal);
     }
-    const pathVal = obj.path || obj.file_path || obj.AbsolutePath || obj.TargetFile || obj.filePath || obj.DirectoryPath || obj.dir || obj.SearchPath || '';
-    if (pathVal) return cleanPath(String(pathVal));
+    
+    // Case-insensitive key check for paths/files
+    let pathVal = '';
+    const keys = Object.keys(obj);
+    const pathKey = keys.find(k => {
+      const kl = k.toLowerCase();
+      return kl.includes('path') || kl.includes('file') || kl.includes('dir') || kl.includes('target');
+    });
+    if (pathKey) {
+      pathVal = String(obj[pathKey]);
+    }
+    
+    if (pathVal) return cleanPath(pathVal);
   
-    const queryVal = obj.query || obj.q || obj.Query || obj.pattern || '';
-    if (queryVal) return String(queryVal);
+    // Case-insensitive key check for queries
+    const queryKey = keys.find(k => {
+      const kl = k.toLowerCase();
+      return kl.includes('query') || kl.includes('pattern') || kl === 'q';
+    });
+    if (queryKey) {
+      return String(obj[queryKey]);
+    }
   }
   
   const rawStr = String(input);
@@ -426,17 +443,18 @@ export function formatToolLine(name: string, input: any, status: string | undefi
   if (name === 'bash' || name === 'execute_command' || name === 'run_command') {
     icon = '⚡';
     actionName = '$';
-  } else if (name === 'read_file' || name === 'view_file') {
+  } else if (name === 'read_file' || name === 'view_file' || name === 'read') {
     icon = '📄';
     actionName = 'Read';
   } else if (name === 'write_file' || name === 'create_file' || name === 'edit_file'
-             || name === 'replace_file_content' || name === 'multi_replace_file_content' || name === 'write_to_file') {
+             || name === 'replace_file_content' || name === 'multi_replace_file_content' 
+             || name === 'write_to_file' || name === 'edit' || name === 'write') {
     icon = '✏️';
     actionName = 'Write';
-  } else if (name === 'web_search' || name === 'search_web' || name === 'grep_search') {
+  } else if (name === 'web_search' || name === 'search_web' || name === 'grep_search' || name === 'grep') {
     icon = '🔍';
     actionName = 'Search';
-  } else if (name === 'list_dir') {
+  } else if (name === 'list_dir' || name === 'list') {
     icon = '📁';
     actionName = 'List';
   }
