@@ -91,16 +91,20 @@ function parseAndFormatTable(tableLines: string[]): string {
     if (cells.length === 0) continue;
     
     let rowText = '';
-    for (let j = 0; j < headers.length; j++) {
+    const firstHeader = headers[0] || 'Key';
+    const firstVal = cells[0] || '-';
+    rowText += `▪️ <b>${firstHeader}:</b> ${firstVal}\n`;
+    
+    for (let j = 1; j < headers.length; j++) {
       const header = headers[j] || `Col ${j + 1}`;
       const value = cells[j] || '-';
       
       if (header.replace(/[-:]/g, '') === '') continue;
       
-      rowText += `  <b>${header}:</b> ${value}\n`;
+      rowText += `  • <b>${header}:</b> ${value}\n`;
     }
     if (rowText) {
-      dataRows.push(`▪️\n${rowText.trimEnd()}`);
+      dataRows.push(rowText.trimEnd());
     }
   }
   
@@ -147,13 +151,75 @@ function formatMarkdownTables(text: string): string {
   return resultLines.join('\n');
 }
 
+function collapseSystemReminders(text: string): string {
+  if (!text) return '';
+  
+  // First, strip internal comment markers completely
+  let clean = text
+    .replace(/<!-- OMO_INTERNAL_INITIATOR -->/g, '')
+    .replace(/<!-- OMO_INTERNAL_NOREPLY -->/g, '');
+    
+  const lines = clean.split('\n');
+  const resultLines: string[] = [];
+  let inReminder = false;
+  let reminderTitle = '';
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    
+    if (trimmed.startsWith('&lt;system-reminder&gt;') || trimmed.startsWith('<system-reminder>')) {
+      inReminder = true;
+      reminderTitle = '';
+      const rest = trimmed
+        .replace('&lt;system-reminder&gt;', '')
+        .replace('<system-reminder>', '')
+        .trim();
+      if (rest) {
+        reminderTitle = rest;
+      }
+      continue;
+    }
+    
+    if (inReminder) {
+      if (trimmed.endsWith('&lt;/system-reminder&gt;') || trimmed.endsWith('</system-reminder>') || 
+          trimmed === '&lt;/system-reminder&gt;' || trimmed === '</system-reminder>') {
+        inReminder = false;
+        const finalTitle = reminderTitle || 'System Notification';
+        resultLines.push(`🔔 <b>System</b>: ${finalTitle}`);
+        continue;
+      }
+      if (!reminderTitle && trimmed) {
+        reminderTitle = trimmed.replace(/[\[\]`]/g, '');
+      }
+      continue;
+    }
+    
+    // Skip empty lines or timestamps right after a system reminder or DCP block
+    const lastResult = resultLines[resultLines.length - 1];
+    if (lastResult && (lastResult.startsWith('🔔 <b>System</b>:') || lastResult.startsWith('✂️ <b>DCP</b>:'))) {
+      if (trimmed === '') {
+        continue;
+      }
+      if (/^\d{1,2}:\d{2}\s*(?:AM|PM)?$/i.test(trimmed)) {
+        continue;
+      }
+    }
+    
+    resultLines.push(line);
+  }
+  
+  return resultLines.join('\n').trim();
+}
+
 export function escapeHtml(text: string): string {
   const escaped = text
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
-  const collapsed = collapseDcpBlocks(escaped);
-  const tablesFormatted = formatMarkdownTables(collapsed);
+  const collapsedDcp = collapseDcpBlocks(escaped);
+  const collapsedReminders = collapseSystemReminders(collapsedDcp);
+  const tablesFormatted = formatMarkdownTables(collapsedReminders);
   return convertMarkdownToHtml(tablesFormatted);
 }
 
