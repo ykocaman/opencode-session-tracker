@@ -6,6 +6,9 @@ import { getTelegramStatus, updateCurrentSessionId } from "../telegram";
 import { getStatusSignal } from "./signals";
 import { SessionItem } from "./SessionItem";
 
+let cachedSessions: any[] = [];
+let cachedDir = '';
+
 export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: TuiPluginApi }) {
   const { api } = props;
   
@@ -32,16 +35,28 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
   };
 
   const fetchSessions = async () => {
+    const activeDir = api.state.path.directory;
+    if (activeDir !== cachedDir) {
+      cachedSessions = [];
+      cachedDir = activeDir;
+    }
     try {
-      const activeDir = api.state.path.directory;
       const response = await (api.client.session as any).list({ query: { directory: activeDir, limit: 30 } });
-      return response.data || [];
+      const data = response.data || response || [];
+      if (Array.isArray(data)) {
+        cachedSessions = data;
+      }
+      return cachedSessions;
     } catch (err) {
-      return [];
+      return cachedSessions;
     }
   };
 
-  const [rawSessions, { refetch }] = createResource(fetchSessions);
+  const activeDir = api.state.path.directory;
+  const initialSessions = activeDir === cachedDir ? cachedSessions : [];
+  const [rawSessions, { refetch }] = createResource(fetchSessions, {
+    initialValue: initialSessions
+  });
   
   const interval = setInterval(() => {
     refetch();
