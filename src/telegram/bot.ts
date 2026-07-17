@@ -150,7 +150,7 @@ export function notifyTelegramQuestion(requestId: string, sessionId: string, que
     }
     
     const inlineKeyboard: any[][] = [];
-    if (q.type === 'multiple-choice' && Array.isArray(q.options)) {
+    if (Array.isArray(q.options) && q.options.length > 0) {
         q.options.forEach((opt: string) => {
             inlineKeyboard.push([{ text: opt, callback_data: `q_ans_${opt.slice(0, 30)}` }]);
         });
@@ -171,7 +171,7 @@ export function notifyTelegramQuestion(requestId: string, sessionId: string, que
 function sendQuestionMessage(flow: QuestionFlow) {
   const q = flow.questions[flow.currentIndex];
   let inlineKeyboard: any[][] = [];
-  if (q.type === 'multiple-choice' && Array.isArray(q.options)) {
+  if (Array.isArray(q.options) && q.options.length > 0) {
       q.options.forEach((opt: string) => {
           inlineKeyboard.push([{ text: opt, callback_data: `q_ans_${opt.slice(0, 30)}` }]);
       });
