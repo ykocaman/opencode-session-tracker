@@ -117,6 +117,11 @@ export async function handleTailCommand(chatId: number, sessionIdParam?: string 
     });
     if (!trackingMsg) return;
 
+    // Update Stop Tailing button callback with the correct message_id
+    bot?.editMessageReplyMarkup({
+      inline_keyboard: [[{ text: '❌ Stop Tailing', callback_data: `stop_tracking_${trackingMsg.message_id}` }]]
+    }, { chat_id: chatId, message_id: trackingMsg.message_id }).catch(() => {});
+
     registerMessageSession(trackingMsg.message_id, sessionId, targetDir);
     startTailTracking(sessionId, chatId, trackingMsg.message_id, targetDir);
   } catch (err) {

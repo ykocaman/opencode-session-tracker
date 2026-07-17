@@ -176,6 +176,8 @@ export function startTailTracking(
 
   let lastActivityTimestamp = Date.now();
   let lastFormattedContent = '';
+  let promptStartedAt: number | null = null;
+  let frozenDuration = '';
 
   const messageCache = new Map<string, { role: string, text: string }>();
   let messageOrder: string[] = [];
@@ -244,17 +246,38 @@ export function startTailTracking(
         lastFormattedContent = contentText;
       }
 
+      // Manage duration tracking
+      if (statusType !== 'idle') {
+        if (!promptStartedAt) {
+          promptStartedAt = Date.now();
+        }
+        frozenDuration = '';
+      } else {
+        if (promptStartedAt) {
+          const totalSec = (Date.now() - promptStartedAt) / 1000;
+          frozenDuration = totalSec < 60 ? `${totalSec.toFixed(1)}s` : `${Math.floor(totalSec/60)}m ${Math.round(totalSec%60)}s`;
+          promptStartedAt = null;
+        }
+      }
+
+      const durationStr = promptStartedAt 
+        ? (() => {
+            const sec = (Date.now() - promptStartedAt) / 1000;
+            return sec < 60 ? `${sec.toFixed(1)}s` : `${Math.floor(sec/60)}m ${Math.round(sec%60)}s`;
+          })()
+        : (frozenDuration || '0.0s');
+
       if (Date.now() - lastActivityTimestamp > 30 * 60 * 1000) {
         tracking.isComplete = true;
         clearInterval(tracking.timer);
         activeTails.delete(trackingMessageId);
         
-        const finalMsg = await buildMessageWithHeaderAndFooter(sessionId, contentText, lastAssistant, lastActivityTimestamp);
+        const finalMsg = await buildMessageWithHeaderAndFooter(sessionId, contentText, lastAssistant, lastActivityTimestamp, durationStr);
         editMessageDirectly(finalMsg);
         return;
       }
 
-      const finalMsg = await buildMessageWithHeaderAndFooter(sessionId, contentText, lastAssistant, lastActivityTimestamp);
+      const finalMsg = await buildMessageWithHeaderAndFooter(sessionId, contentText, lastAssistant, lastActivityTimestamp, durationStr);
       scheduleEdit(finalMsg);
     } catch(err) {
       console.error('[Telegram] Tail polling interval error:', err);

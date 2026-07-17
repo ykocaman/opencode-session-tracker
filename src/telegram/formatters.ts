@@ -267,6 +267,7 @@ function collapseDiffHeaders(text: string): string {
     const writeMatch = trimmed.match(/^(?:←\s*)?Write\s+([^\s:]+)/i);
     const grepMatch = trimmed.match(/^(?:[✱★➔]\s*)?Grep\s+(.+?)\s+in\s+(.+)$/i);
     const grepSimpleMatch = trimmed.match(/^(?:[✱★➔]\s*)?Grep\s+(.+)$/i);
+    const runningMatch = trimmed.match(/^(?:#+\s*)?Running\s+in\s+(.+)$/i);
     
     if (editMatch) {
       const cleanP = cleanPath(editMatch[1]);
@@ -287,6 +288,15 @@ function collapseDiffHeaders(text: string): string {
     } else if (grepSimpleMatch) {
       resultLines.push(`🔍 <b>Search:</b> <code>${grepSimpleMatch[1]}</code>`);
       continue;
+    } else if (runningMatch) {
+      const cleanDir = cleanPath(runningMatch[1]);
+      const nextLine = lines[i + 1];
+      if (nextLine) {
+        const cleanCmd = cleanCommand(nextLine.trim());
+        resultLines.push(`⚡ <b>Run:</b> <code>${cleanCmd}</code> in <code>${cleanDir}</code>`);
+        i++;
+        continue;
+      }
     }
     
     resultLines.push(line);
@@ -576,7 +586,8 @@ export async function buildMessageWithHeaderAndFooter(
   sessionId: string,
   bodyText: string,
   lastAssistant: any,
-  promptTimestamp: number
+  promptTimestamp: number,
+  durationOverride?: string
 ): Promise<string> {
   let sessionTitle = '';
   try {
@@ -603,9 +614,13 @@ export async function buildMessageWithHeaderAndFooter(
   if (modelVal) metaParts.push(modelVal);
 
   // Duration
-  const elapsedMs = Date.now() - promptTimestamp;
-  const sec = elapsedMs / 1000;
-  metaParts.push(sec < 60 ? `${sec.toFixed(1)}s` : `${Math.floor(sec/60)}m ${Math.round(sec%60)}s`);
+  if (durationOverride) {
+    metaParts.push(durationOverride);
+  } else {
+    const elapsedMs = Date.now() - promptTimestamp;
+    const sec = elapsedMs / 1000;
+    metaParts.push(sec < 60 ? `${sec.toFixed(1)}s` : `${Math.floor(sec/60)}m ${Math.round(sec%60)}s`);
+  }
 
   // Tokens & cost display are currently disabled per user preference to reduce footer noise.
   // KEEP THIS CODE: Do not delete, it will be re-enabled when requested.

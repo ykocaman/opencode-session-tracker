@@ -908,7 +908,7 @@ async function handleIncomingText(
         activeTails.delete(msgId);
         
         bot?.editMessageReplyMarkup({ inline_keyboard: [] }, {
-          chat_id: chatId,
+          chat_id: tail.chatId,
           message_id: msgId
         }).catch(() => {});
       }
