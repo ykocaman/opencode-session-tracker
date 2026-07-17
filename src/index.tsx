@@ -210,12 +210,14 @@ const tui: TuiPlugin = async (api) => {
   });
   
   api.event.on("question.asked", (e: any) => {
-    if (e.properties?.sessionID && e.properties?.questions?.length > 0) {
-      updateStatusSafe(e.properties.sessionID, "ask");
-      const requestId = e.properties.id;
-      registerQuestionRequest(e.properties.sessionID, requestId);
-      const title = api.state.session.get(e.properties.sessionID)?.title || e.properties.sessionID.slice(0,8);
-      notifyTelegramQuestion(requestId, e.properties.sessionID, e.properties.questions, title);
+    // SDK may use e.properties (old) or e.data (new)
+    const props = e.properties || e.data || {};
+    if (props.sessionID && props.questions?.length > 0) {
+      updateStatusSafe(props.sessionID, "ask");
+      const requestId = props.id;
+      registerQuestionRequest(props.sessionID, requestId);
+      const title = api.state.session.get(props.sessionID)?.title || props.sessionID.slice(0,8);
+      notifyTelegramQuestion(requestId, props.sessionID, props.questions, title);
     }
   });
 

@@ -180,22 +180,20 @@ function sendQuestionMessage(flow: QuestionFlow) {
     q.options.forEach((opt: any, idx: number) => {
       // QuestionOption = { label: string, description: string }
       const label = typeof opt === 'string' ? opt : (opt.label || opt.text || String(idx + 1));
-      const desc = typeof opt === 'object' ? (opt.description || '') : '';
-      const btnText = desc ? `${label} — ${desc.slice(0, 40)}` : label;
       const cbData = `q_ans_${label.slice(0, 30)}`;
-      inlineKeyboard.push([{ text: btnText.slice(0, 64), callback_data: cbData }]);
+      inlineKeyboard.push([{ text: label.slice(0, 64), callback_data: cbData }]);
     });
   }
   inlineKeyboard.push([{ text: "❌ Skip/Cancel", callback_data: "q_cancel" }]);
   
-  const num = flow.questions.length > 1 ? ` *(${flow.currentIndex + 1}/${flow.questions.length})*` : '';
-  const msg = `📌 *${escapeMarkdown(flow.title)}*${num}\n\n${escapeMarkdown(q.question)}`;
+  const num = flow.questions.length > 1 ? ` (${flow.currentIndex + 1}/${flow.questions.length})` : '';
+  // Plain text — no parse_mode to avoid Markdown entity parse errors
+  const msg = `📌 ${flow.title}${num}\n\n${q.question}`;
   
   // Send to all allowed users and persist messageId/chatId back to disk
   allowedUsers.forEach(async (userId) => {
       try {
         const sent = await bot?.sendMessage(userId, msg, {
-          parse_mode: 'Markdown',
           reply_markup: { inline_keyboard: inlineKeyboard }
         });
         if (sent) {
