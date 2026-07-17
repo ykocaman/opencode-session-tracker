@@ -15,9 +15,6 @@ import { handleStart, handleProjectsCommand, handleSessionsCommand, handleHistor
 import { launchOpenCodeInstance } from './launcher';
 
 export const activeTails = new Map<number, TailTracking>();
-export const permissionRequests = new Map<string, { sessionId: string, permId: string }>();
-export const pendingQuestions = new Map<string, string>();
-
 let lastCreatedTimestamp = 0;
 let lastSyncTimestamp = 0;
 let lastMenuUpdateTimestamp = 0;
@@ -32,7 +29,87 @@ export interface QuestionFlow {
   chatId?: number;
   title: string;
 }
-export const qfMap = new Map<string, QuestionFlow>();
+
+export const permissionRequests = {
+  get(key: string): { sessionId: string, permId: string } | undefined {
+    try { return readState().permissionRequests?.[key]; } catch(e) { return undefined; }
+  },
+  set(key: string, val: { sessionId: string, permId: string }) {
+    try {
+      const state = readState();
+      state.permissionRequests = state.permissionRequests || {};
+      state.permissionRequests[key] = val;
+      writeState(state);
+    } catch(e) {}
+  },
+  delete(key: string): boolean {
+    try {
+      const state = readState();
+      if (state.permissionRequests && key in state.permissionRequests) {
+        delete state.permissionRequests[key];
+        writeState(state);
+        return true;
+      }
+    } catch(e) {}
+    return false;
+  },
+  entries(): [string, { sessionId: string, permId: string }][] {
+    try { return Object.entries(readState().permissionRequests || {}); } catch(e) { return []; }
+  }
+};
+
+export const pendingQuestions = {
+  get(key: string): string | undefined {
+    try { return readState().pendingQuestions?.[key]; } catch(e) { return undefined; }
+  },
+  set(key: string, val: string) {
+    try {
+      const state = readState();
+      state.pendingQuestions = state.pendingQuestions || {};
+      state.pendingQuestions[key] = val;
+      writeState(state);
+    } catch(e) {}
+  },
+  delete(key: string): boolean {
+    try {
+      const state = readState();
+      if (state.pendingQuestions && key in state.pendingQuestions) {
+        delete state.pendingQuestions[key];
+        writeState(state);
+        return true;
+      }
+    } catch(e) {}
+    return false;
+  }
+};
+
+export const qfMap = {
+  get(key: string): QuestionFlow | undefined {
+    try { return readState().qfMap?.[key]; } catch(e) { return undefined; }
+  },
+  set(key: string, val: QuestionFlow) {
+    try {
+      const state = readState();
+      state.qfMap = state.qfMap || {};
+      state.qfMap[key] = val;
+      writeState(state);
+    } catch(e) {}
+  },
+  delete(key: string): boolean {
+    try {
+      const state = readState();
+      if (state.qfMap && key in state.qfMap) {
+        delete state.qfMap[key];
+        writeState(state);
+        return true;
+      }
+    } catch(e) {}
+    return false;
+  },
+  values(): QuestionFlow[] {
+    try { return Object.values(readState().qfMap || {}); } catch(e) { return []; }
+  }
+};
 
 export function registerQuestionRequest(sessionId: string, requestId: string) {
     pendingQuestions.set(sessionId, requestId);
