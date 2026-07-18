@@ -1,5 +1,6 @@
 import { exec } from 'child_process';
 import path from 'path';
+import { readProjectPid } from './state';
 
 export function launchOpenCodeInstance(targetDir: string, callback: (err: Error | null) => void) {
   // Security path check to prevent command injection
@@ -45,4 +46,25 @@ export function launchOpenCodeInstance(targetDir: string, callback: (err: Error 
   exec(command, (err) => {
     callback(err);
   });
+}
+
+export function killOpenCodeInstance(targetDir: string, currentPid: number): { killed: boolean; message: string } {
+  const pid = readProjectPid(targetDir);
+
+  if (!pid) {
+    return { killed: false, message: `⚠️ No active OpenCode instance found for ${path.basename(targetDir)}` };
+  }
+
+  if (pid === currentPid) {
+    // Self-close: delay exit so the bot response sends first, then failover to another instance
+    setTimeout(() => process.exit(0), 2000);
+    return { killed: true, message: `✅ Closed OpenCode in ${path.basename(targetDir)}` };
+  }
+
+  try {
+    process.kill(pid, 'SIGTERM');
+    return { killed: true, message: `✅ Closed OpenCode in ${path.basename(targetDir)}` };
+  } catch {
+    return { killed: false, message: `⚠️ Failed to close OpenCode in ${path.basename(targetDir)} (already exited?)` };
+  }
 }

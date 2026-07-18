@@ -220,6 +220,26 @@ export function startTailTracking(
       if (tracking.isComplete) return;
       const { activeText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant, calculatedDurationStr } = await getSessionActiveContent(sessionId, directory);
 
+      // ponytail: when parent is idle, check for active child/sub-sessions to keep tail alive
+      let effectiveStatusType = statusType;
+      if (statusType === 'idle') {
+        try {
+          const listRes = await (apiRef.client.session as any).list({ query: { directory, limit: 50 } }).catch(() => null);
+          const sessions = listRes?.data || listRes || [];
+          if (Array.isArray(sessions)) {
+            const children = sessions.filter((s: any) => s.parentID === sessionId && s.status !== 'deleted');
+            if (children.length > 0) {
+              const childStatuses = (await apiRef.client.session.status({ directory }).catch(() => null))?.data || {};
+              const hasActiveChild = children.some((s: any) => {
+                const st = childStatuses[s.id]?.type || s.status || 'idle';
+                return st !== 'idle' && st !== 'deleted' && st !== 'error';
+              });
+              if (hasActiveChild) effectiveStatusType = 'running';
+            }
+          }
+        } catch(e) {/* child check best-effort */}
+      }
+
       // Add new history messages to our local cache
       historyMsgs.forEach((m: any) => {
         const msgId = m.id || m.requestID || String(m.time?.updated || m.timeUpdated || Math.random());
@@ -268,19 +288,19 @@ export function startTailTracking(
       });
 
       let formattedActive = '';
-      if (statusType !== 'idle' || lastMsgIsAssistant) {
+      if (effectiveStatusType !== 'idle' || lastMsgIsAssistant) {
         formattedActive = `🤖 ${activeText}\n\n`;
       }
 
       const contentText = `${formattedHistory}${formattedActive}`.trim();
       
-      if (contentText !== lastFormattedContent || statusType !== 'idle') {
+      if (contentText !== lastFormattedContent || effectiveStatusType !== 'idle') {
         lastActivityTimestamp = Date.now();
         lastFormattedContent = contentText;
       }
 
       // Manage duration tracking and track if prompt has started running
-      if (statusType !== 'idle') {
+      if (effectiveStatusType !== 'idle') {
         tracking.hasStartedRunning = true;
         if (!promptStartedAt) {
           promptStartedAt = Date.now();
@@ -305,7 +325,7 @@ export function startTailTracking(
 
       // Finalize tail if session goes idle (and has started running, or has been idle for 15s since tail started)
       const timeSinceStart = Date.now() - tracking.startedAt;
-      const isSessionCompleted = statusType === 'idle' && (tracking.hasStartedRunning || timeSinceStart > 15000);
+      const isSessionCompleted = effectiveStatusType === 'idle' && (tracking.hasStartedRunning || timeSinceStart > 15000);
       const isExpired = Date.now() - lastActivityTimestamp > 30 * 60 * 1000;
 
       if (isSessionCompleted || isExpired) {

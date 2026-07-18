@@ -4,15 +4,15 @@ import path from 'path';
 import { 
   bot, setBot, apiRef, setApiRef, allowedUsers, setAllowedUsers, selectedModel, setSelectedModel, 
   activeProjectDir, setActiveProjectDir, isLeader, setIsLeader, leaderInterval, setLeaderInterval, 
-  STATE_DIR, LOCK_FILE, STATE_FILE, readState, writeState, updateState, loadConfig, updateActiveProjects, cleanupStaleCacheFiles,
+  STATE_DIR, LOCK_FILE, STATE_FILE, INSTANCE_ID, readState, writeState, updateState, loadConfig, updateActiveProjects, readActiveProjects, cleanupStaleCacheFiles,
   lastSessionsMessage, setLastSessionsMessage, lastProjectsMessage, setLastProjectsMessage, lastHistoryMessage, setLastHistoryMessage,
-  sessionFinalizers, saveSessionModel
+  sessionFinalizers, saveSessionModel, setProjectStatusOverride, clearProjectStatusOverride
 } from './state';
 import { registerMessageSession, escapeHtml } from './formatters';
 import { getProjectsKeyboard, getSessionsKeyboard, projectIds, sessionIds, modelIds } from './keyboards';
 import { startTailTracking, TailTracking } from './tail';
-import { handleStart, handleProjectsCommand, handleSessionsCommand, handleHistoryCommand, handleTailCommand, sendRecap, handleHelpCommand } from './commands';
-import { launchOpenCodeInstance } from './launcher';
+import { handleStart, handleProjectsCommand, handleSessionsCommand, handleHistoryCommand, handleTailCommand, sendRecap, handleHelpCommand, handleRestartCommand } from './commands';
+import { launchOpenCodeInstance, killOpenCodeInstance } from './launcher';
 
 export const activeTails = new Map<number, TailTracking>();
 let lastCreatedTimestamp = 0;
@@ -113,6 +113,9 @@ export const qfMap = {
   },
   values(): QuestionFlow[] {
     try { return Object.values(readState().qfMap || {}); } catch(e) { return []; }
+  },
+  entries(): [string, QuestionFlow][] {
+    try { return Object.entries(readState().qfMap || {}); } catch(e) { return []; }
   }
 };
 
@@ -261,7 +264,14 @@ export function stopTelegramBot() {
   activeTails.clear();
 }
 
+function alive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; }
+  catch (e: any) { return e.code === 'EPERM'; }
+}
+
 let syncLoopRunning = false;
+let lockCheckTick = 0;
+let questionFlowCheckTick = 0;
 
 async function syncLoop() {
   if (syncLoopRunning) return;
@@ -355,22 +365,59 @@ async function syncLoop() {
       } catch (e) {}
     }
 
-    if (!lockData || now - lockData.timestamp > 15000) {
-      try {
-        fs.writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, timestamp: now }));
-        if (!isLeader) {
-          setIsLeader(true);
-          startTelegramBot();
+    const lockExpired = !lockData || now - lockData.timestamp > 15000;
+    const lockIsMine = lockData?.id === INSTANCE_ID;
+    let shouldBeLeader = false;
+
+    if (lockIsMine) {
+      fs.writeFileSync(LOCK_FILE, JSON.stringify({ id: INSTANCE_ID, pid: process.pid, timestamp: now }));
+      shouldBeLeader = true;
+    } else if (lockExpired) {
+      fs.writeFileSync(LOCK_FILE, JSON.stringify({ id: INSTANCE_ID, pid: process.pid, timestamp: now }));
+      shouldBeLeader = true;
+    } else if (++lockCheckTick % 15 === 0) {
+      if (!alive(lockData.pid)) {
+        fs.writeFileSync(LOCK_FILE, JSON.stringify({ id: INSTANCE_ID, pid: process.pid, timestamp: now }));
+        shouldBeLeader = true;
+      }
+    }
+
+    if (shouldBeLeader) {
+      if (!isLeader) {
+        setIsLeader(true);
+        startTelegramBot();
+      } else if (!bot) {
+        startTelegramBot();
+      }
+    } else if (isLeader) {
+      setIsLeader(false);
+      stopTelegramBot();
+    }
+
+    // Periodically check if question flows were answered externally (terminal)
+    // and update/close the corresponding Telegram messages
+    if (isLeader && bot && ++questionFlowCheckTick % 30 === 0) {
+      for (const [requestId, flow] of qfMap.entries()) {
+        if (!flow.chatId || !flow.messageId) continue;
+        try {
+          const pendingQs = apiRef?.state?.session?.question?.(flow.sessionId);
+          const stillPending = pendingQs && pendingQs.length > 0;
+          if (stillPending) continue;
+
+          // Question was answered/cancelled externally — close the Telegram message
+          const q = flow.questions[flow.currentIndex] || flow.questions[flow.questions.length - 1];
+          const num = flow.questions.length > 1 ? ` (${flow.questions.length}/${flow.questions.length})` : '';
+          const msg = `— ${flow.title}${num}\n\n${q.question}\n\n_Answered in terminal_`;
+          bot?.editMessageText(msg, {
+            chat_id: flow.chatId,
+            message_id: flow.messageId,
+            reply_markup: { inline_keyboard: [] }
+          }).catch(() => {});
+          qfMap.delete(requestId);
+          pendingQuestions.delete(flow.sessionId);
+        } catch (e) {
+          // skip on error (e.g. session gone, API not available)
         }
-      } catch (e) {}
-    } else if (lockData.pid === process.pid) {
-      try {
-        fs.writeFileSync(LOCK_FILE, JSON.stringify({ pid: process.pid, timestamp: now }));
-      } catch (e) {}
-    } else {
-      if (isLeader) {
-        setIsLeader(false);
-        stopTelegramBot();
       }
     }
   } catch(e) {
@@ -533,12 +580,16 @@ export function startTelegramBot() {
           let attempts = 0;
           const pollTimer = setInterval(async () => {
             attempts++;
-            const state = readState();
-            const lastTs = state.projects?.[currentSelected] || 0;
-            const isOnline = (Date.now() - lastTs < 8000);
+            const active = readActiveProjects(8000);
+            const isOnline = !!active[currentSelected];
             
             if (isOnline) {
               clearInterval(pollTimer);
+              const st = readState();
+              if (st.sync?.targetDir === currentSelected) {
+                st.sync = undefined;
+                writeState(st);
+              }
               const kb = await getProjectsKeyboard();
               newBot.editMessageReplyMarkup({ inline_keyboard: kb }, { chat_id: chatId, message_id: messageId }).catch(() => {});
             } else if (attempts > 30) {
@@ -550,6 +601,44 @@ export function startTelegramBot() {
     } else if (query.data === 'proj_list_sessions') {
       newBot.answerCallbackQuery(query.id, { text: "Listing sessions..." });
       await handleSessionsCommand(query.message.chat.id);
+    } else if (query.data === 'proj_close') {
+      if (!query.message) {
+        newBot.answerCallbackQuery(query.id, { text: "Menu outdated." });
+        return;
+      }
+      if (lastProjectsMessage && query.message.message_id !== lastProjectsMessage.messageId) {
+        newBot.answerCallbackQuery(query.id, { text: "Menu outdated. Send /projects again." });
+        return;
+      }
+      const chatId = query.message.chat.id;
+      const msgId = query.message.message_id;
+      const target = activeProjectDir || apiRef?.state?.path?.directory;
+      if (!target) {
+        newBot.answerCallbackQuery(query.id, { text: "No project selected." });
+        return;
+      }
+      const active = readActiveProjects(15000);
+      if (!active[target]) {
+        newBot.answerCallbackQuery(query.id, { text: `⚠️ No active instance for ${path.basename(target)}` });
+        getProjectsKeyboard().then(kb => newBot.editMessageReplyMarkup({ inline_keyboard: kb }, { chat_id: chatId, message_id: msgId }).catch(() => {}));
+        return;
+      }
+      if (Object.keys(active).length <= 1) {
+        newBot.answerCallbackQuery(query.id, { text: "⚠️ Last active instance. Cannot close." });
+        return;
+      }
+      newBot.answerCallbackQuery(query.id, { text: `Closing ${path.basename(target)}...` });
+      const result = killOpenCodeInstance(target, process.pid);
+      if (result.killed) {
+        setProjectStatusOverride(target, 'closing');
+        getProjectsKeyboard().then(kb => newBot.editMessageReplyMarkup({ inline_keyboard: kb }, { chat_id: chatId, message_id: msgId }).catch(() => {}));
+        setTimeout(() => {
+          clearProjectStatusOverride(target);
+          getProjectsKeyboard().then(newKb => newBot.editMessageReplyMarkup({ inline_keyboard: newKb }, { chat_id: chatId, message_id: msgId }).catch(() => {}));
+        }, 10000);
+      } else {
+        newBot.answerCallbackQuery(query.id, { text: result.message });
+      }
     } else if (query.data === 'sess_tail') {
       const queryDir = activeProjectDir || apiRef.state.path.directory;
       let currentActive: string | null = null;
@@ -634,7 +723,6 @@ export function startTelegramBot() {
       }
       
       newBot.answerCallbackQuery(query.id, { text: "No active question or permission request found." });
-      newBot.sendMessage(chatId, "⚠️ No active question or permission request found for this session.").catch(() => {});
     } else if (query.data.startsWith('stop_tracking_')) {
       const msgId = parseInt(query.data.replace('stop_tracking_', ''), 10);
       
@@ -818,6 +906,8 @@ export function startTelegramBot() {
       } else if (cmd === '/tail') {
         const sessIdArg = parts.length > 1 ? parts[1] : null;
         await handleTailCommand(msg.chat.id, sessIdArg);
+      } else if (cmd === '/restart') {
+        await handleRestartCommand(msg.chat.id);
       } else if (cmd === '/help') {
         await handleHelpCommand(msg.chat.id);
       }

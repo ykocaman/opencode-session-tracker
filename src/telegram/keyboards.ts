@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import { exec } from 'child_process';
 import util from 'util';
-import { apiRef, readState, activeProjectDir } from './state';
+import { apiRef, readState, readActiveProjects, activeProjectDir } from './state';
 
 const execAsync = util.promisify(exec);
 
@@ -82,13 +82,10 @@ export async function getProjectsKeyboard() {
       }
   }
   
-  const state = readState();
-  const projects = state.projects || {};
   const now = Date.now();
-  for (const [dir, ts] of Object.entries(projects)) {
-      if (now - (ts as number) < 86400000) {
-          dirs.add(dir);
-      }
+  const active = readActiveProjects(45000);
+  for (const dir of Object.keys(active)) {
+      dirs.add(dir);
   }
   
   try {
@@ -107,8 +104,8 @@ export async function getProjectsKeyboard() {
   // 3. Offline goes after.
   // 4. Alphabetical by folder basename.
   const sortedDirs = Array.from(dirs).sort((a, b) => {
-    const lastTsA = state.projects?.[a] || 0;
-    const lastTsB = state.projects?.[b] || 0;
+    const lastTsA = active[a]?.timestamp || 0;
+    const lastTsB = active[b]?.timestamp || 0;
     const isOnlineA = (now - lastTsA < 8000);
     const isOnlineB = (now - lastTsB < 8000);
     if (isOnlineA && !isOnlineB) return -1;
@@ -124,11 +121,19 @@ export async function getProjectsKeyboard() {
   sortedDirs.forEach(dir => {
       const isSelected = (activeProjectDir === dir) || (!activeProjectDir && dir === apiRef?.state?.path?.directory);
       const title = path.basename(dir) || dir;
-      const lastTs = state.projects?.[dir] || 0;
+      const lastTs = active[dir]?.timestamp || 0;
       const isOnline = (now - lastTs < 8000);
 
-      const statusIcon = isOnline ? '🟢' : '⚪';
-      const arrow = isSelected ? '→ ' : '';
+      // Check for status overrides (processing = yellow, closing = gray)
+      const overrides = readState().projectStatusOverrides || {};
+      const override = overrides[dir];
+      let statusIcon: string;
+      if (override && (now - override.timestamp < 15000)) {
+        statusIcon = override.status === 'processing' ? '🟡' : '⚪';
+      } else {
+        statusIcon = isOnline ? '🟢' : '⚪';
+      }
+      const arrow = isSelected && activeProjectDir ? '→ ' : '';
       const buttonText = `${arrow}${statusIcon} ${title}`;
       
       let hash = 5381;
@@ -144,10 +149,14 @@ export async function getProjectsKeyboard() {
   const currentSelected = activeProjectDir || apiRef?.state?.path?.directory;
   if (currentSelected) {
     const name = path.basename(currentSelected);
-    const lastTs = state.projects?.[currentSelected] || 0;
+    const lastTs = active[currentSelected]?.timestamp || 0;
     const isOnline = (now - lastTs < 8000);
     if (isOnline) {
-      inlineKeyboard.push([{ text: '📋 List Sessions', callback_data: 'proj_list_sessions' }]);
+      const row: any[] = [{ text: '📋 List Sessions', callback_data: 'proj_list_sessions' }];
+      if (Object.keys(active).length > 1) {
+        row.push({ text: '❌ Close', callback_data: 'proj_close' });
+      }
+      inlineKeyboard.push(row);
     } else {
       inlineKeyboard.push([{ text: '🚀 Launch OpenCode', callback_data: 'proj_launch' }]);
     }

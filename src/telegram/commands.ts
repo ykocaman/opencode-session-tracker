@@ -1,10 +1,20 @@
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { apiRef, bot, readState, activeProjectDir, setActiveProjectDir, lastProjectsMessage, setLastProjectsMessage, lastSessionsMessage, setLastSessionsMessage, lastHistoryMessage, setLastHistoryMessage } from './state';
+import { apiRef, bot, readState, readActiveProjects, activeProjectDir, setActiveProjectDir, lastProjectsMessage, setLastProjectsMessage, lastSessionsMessage, setLastSessionsMessage, lastHistoryMessage, setLastHistoryMessage, setProjectStatusOverride, clearProjectStatusOverride } from './state';
 import { registerMessageSession, escapeHtml, buildMessageWithHeaderAndFooter } from './formatters';
 import { getProjectsKeyboard, getSessionsKeyboard } from './keyboards';
 import { startTailTracking } from './tail';
+import { launchOpenCodeInstance, killOpenCodeInstance } from './launcher';
+
+async function refreshProjectsMessage() {
+  if (!lastProjectsMessage) return;
+  const inlineKeyboard = await getProjectsKeyboard();
+  bot?.editMessageReplyMarkup({ inline_keyboard: inlineKeyboard }, {
+    chat_id: lastProjectsMessage.chatId,
+    message_id: lastProjectsMessage.messageId
+  }).catch(() => {});
+}
 
 export async function handleStart(chatId: number) {
   bot?.sendMessage(chatId, "👋 Welcome to OpenCode Telegram Integration! Remote session manager is active.");
@@ -223,6 +233,78 @@ export async function sendRecap(chatId: number, messageId: number | undefined, s
   } catch(e) {}
 }
 
+export async function handleCloseCommand(chatId: number) {
+  const currentDir = apiRef?.state?.path?.directory;
+  const targetDir = activeProjectDir || currentDir;
+
+  if (!targetDir) {
+    refreshProjectsMessage();
+    return;
+  }
+
+  const active = readActiveProjects(15000);
+
+  if (!active[targetDir]) {
+    refreshProjectsMessage();
+    return;
+  }
+
+  if (Object.keys(active).length <= 1) {
+    return;
+  }
+
+  const result = killOpenCodeInstance(targetDir, process.pid);
+
+  if (result.killed) {
+    setProjectStatusOverride(targetDir, 'closing');
+    refreshProjectsMessage();
+    setTimeout(() => {
+      clearProjectStatusOverride(targetDir);
+      refreshProjectsMessage();
+    }, 10000);
+  }
+}
+
+export async function handleRestartCommand(chatId: number) {
+  const target = activeProjectDir || apiRef?.state?.path?.directory;
+  if (!target) {
+    bot?.sendMessage(chatId, "⚠️ No project selected. Use /projects to select one.").catch(() => {});
+    return;
+  }
+  const dirName = path.basename(target);
+
+  // Set yellow ball to indicate processing
+  setProjectStatusOverride(target, 'processing');
+  refreshProjectsMessage();
+
+  launchOpenCodeInstance(target, (err) => {
+    if (err) {
+      clearProjectStatusOverride(target);
+      refreshProjectsMessage();
+      bot?.sendMessage(chatId, `❌ Launch failed: ${err.message}`).catch(() => {});
+      return;
+    }
+    let attempts = 0;
+    const pollTimer = setInterval(() => {
+      attempts++;
+      const active = readActiveProjects(8000);
+      if (active[target]) {
+        clearInterval(pollTimer);
+        // New instance is online — kill the old one, then clear override
+        // so ball turns green (new instance heartbeat is active)
+        killOpenCodeInstance(target, process.pid);
+        clearProjectStatusOverride(target);
+        refreshProjectsMessage();
+      } else if (attempts > 30) {
+        clearInterval(pollTimer);
+        clearProjectStatusOverride(target);
+        refreshProjectsMessage();
+        bot?.sendMessage(chatId, `⚠️ Timed out waiting for OpenCode to start in ${dirName}`).catch(() => {});
+      }
+    }, 500);
+  });
+}
+
 export async function handleHelpCommand(chatId: number) {
   const helpText = `📖 <b>OpenCode Integration Help</b>\n\n` +
     `/projects - List workspace projects\n` +
@@ -230,6 +312,7 @@ export async function handleHelpCommand(chatId: number) {
     `/tail - Watch live session execution\n` +
     `/recap - Generate session summary\n` +
     `/models - Switch LLM model\n` +
-    `/history - View older sessions`;
+    `/history - View older sessions\n` +
+    `/restart - Restart OpenCode (reloads plugins)`;
   bot?.sendMessage(chatId, helpText, { parse_mode: 'HTML' }).catch(() => {});
 }

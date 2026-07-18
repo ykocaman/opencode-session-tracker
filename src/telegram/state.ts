@@ -1,7 +1,10 @@
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import TelegramBot from 'node-telegram-bot-api';
+
+export const INSTANCE_ID = crypto.randomUUID();
 
 export const sessionFinalizers = new Map<string, () => void>();
 
@@ -109,23 +112,54 @@ export function loadConfig() {
   return null;
 }
 
+function heartbeatPath(dir: string): string {
+  const hash = crypto.createHash('sha1').update(dir).digest('hex').slice(0, 12);
+  return path.join(STATE_DIR, `heartbeat-${hash}.json`);
+}
+
+function alive(pid: number): boolean {
+  try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
 export function updateActiveProjects() {
   const dir = apiRef?.state?.path?.directory;
   if (!dir) return;
+  const data = JSON.stringify({ dir, pid: process.pid, timestamp: Date.now() });
+  const target = heartbeatPath(dir);
+  const tmp = target + '.' + process.pid + '.tmp';
+  try {
+    fs.writeFileSync(tmp, data);
+    fs.renameSync(tmp, target);
+  } catch (e) {
+    console.error('[Telegram] Failed to write heartbeat:', e);
+  }
+}
+
+export function readActiveProjects(maxAgeMs = 45000): Record<string, { timestamp: number; pid: number }> {
+  const out: Record<string, { timestamp: number; pid: number }> = {};
+  let files: string[] = [];
+  try { files = fs.readdirSync(STATE_DIR); } catch { return out; }
   const now = Date.now();
-  const state = readState();
-  const projects = state.projects || {};
-  
-  projects[dir] = now;
-  
-  for (const k of Object.keys(projects)) {
-    if (now - projects[k] > 86400000) {
-      delete projects[k];
+  for (const f of files) {
+    if (!f.startsWith('heartbeat-')) continue;
+    const fp = path.join(STATE_DIR, f);
+    try {
+      const h = JSON.parse(fs.readFileSync(fp, 'utf8'));
+      if (now - h.timestamp > maxAgeMs || !alive(h.pid)) {
+        try { fs.unlinkSync(fp); } catch {}
+        continue;
+      }
+      out[h.dir] = { timestamp: h.timestamp, pid: h.pid };
+    } catch {
+      try { fs.unlinkSync(fp); } catch {}
     }
   }
-  
-  state.projects = projects;
-  writeState(state);
+  return out;
+}
+
+export function readProjectPid(dir: string): number | null {
+  const active = readActiveProjects(45000);
+  return active[dir]?.pid ?? null;
 }
 
 export function triggerSessionsMenuUpdate() {
@@ -195,6 +229,21 @@ export function saveSessionAgent(sessionId: string, agent: string) {
     writeState(state);
     triggerSessionsMenuUpdate();
   } catch(e) {}
+}
+
+export function setProjectStatusOverride(dir: string, status: string) {
+  const state = readState();
+  state.projectStatusOverrides = state.projectStatusOverrides || {};
+  state.projectStatusOverrides[dir] = { status, timestamp: Date.now() };
+  writeState(state);
+}
+
+export function clearProjectStatusOverride(dir: string) {
+  const state = readState();
+  if (state.projectStatusOverrides) {
+    delete state.projectStatusOverrides[dir];
+    writeState(state);
+  }
 }
 
 export function cleanupStaleCacheFiles() {

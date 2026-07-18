@@ -4,7 +4,7 @@
   "description": "OpenCode TUI plugin & Telegram Integration - Track active sessions/subagents in the sidebar and interact remotely from your phone",
   "type": "module",
   "exports": {
-    "./tui": "./dist/index.tsx"
+    "./tui": "./src/index.tsx"
   },
   "files": [
     "dist",
@@ -13,7 +13,8 @@
   "scripts": {
     "build": "rm -rf dist && cp -R src dist",
     "dev": "node -e \"const f=require('fs'),c=()=>{try{f.cpSync('src','dist',{recursive:true});console.log('built',new Date().toLocaleTimeString())}catch(e){}};if(!f.existsSync('dist'))f.mkdirSync('dist');c();f.watch('src',{recursive:true},c);console.log('watching...')\"",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "node -e \"let p=JSON.parse(require('fs').readFileSync('package.json','utf8'));p.exports['./tui']='./dist/index.tsx';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\" && npm run build",
+    "postpublish": "node -e \"let p=JSON.parse(require('fs').readFileSync('package.json','utf8'));p.exports['./tui']='./src/index.tsx';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\\n')\""
   },
   "keywords": [
     "opencode",
