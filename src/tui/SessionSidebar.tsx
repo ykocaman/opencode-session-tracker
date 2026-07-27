@@ -2,7 +2,7 @@
 import { createResource, onCleanup, For, Show, createSignal } from "solid-js";
 import type { TuiSlotProps, TuiPluginApi } from "@opencode-ai/plugin/tui";
 import { exec } from "child_process";
-import { getTelegramStatus, updateCurrentSessionId } from "../telegram";
+import { getTelegramStatus, updateCurrentSessionId, getArchivedSessions, archiveSession } from "../telegram";
 import { getStatusSignal } from "./signals";
 import { SessionItem } from "./SessionItem";
 
@@ -20,6 +20,12 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
   const initialStatus = getTelegramStatus();
   const [telegramStatus, setTelegramStatus] = createSignal<string>(initialStatus);
   const [showTelegramWarning, setShowTelegramWarning] = createSignal<boolean>(true);
+  const [archived, setArchived] = createSignal<Set<string>>(getArchivedSessions());
+
+  const handleArchive = (id: string) => {
+    archiveSession(id);
+    setArchived(getArchivedSessions());
+  };
 
   if (initialStatus === "missing") {
     setTimeout(() => {
@@ -60,6 +66,7 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
   
   const interval = setInterval(() => {
     refetch();
+    setArchived(getArchivedSessions());
     // Sync active session from route (slot session_id may not be reactive)
     const currentRoute = api.route.current as any;
     if (currentRoute.name === "session" && currentRoute.params?.sessionID) {
@@ -74,9 +81,10 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
       const EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours since last update = expired
       const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
       
+      const archivedIds = archived();
       const isExpired = (s: any) => {
          const updatedTime = typeof s.time?.updated === 'number' ? s.time.updated : 0;
-         return now - updatedTime >= EXPIRY_MS;
+         return archivedIds.has(s.id) || now - updatedTime >= EXPIRY_MS;
       };
       
       sessions = sessions.filter((s: any) => {
@@ -214,12 +222,13 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
       </Show>
       <For each={activeSessions()}>
         {(session: any) => (
-          <SessionItem 
-            {...session} 
+          <SessionItem
+            {...session}
             currentSessionId={currentSessionId}
             setCurrentSessionId={setCurrentSessionId}
             expanded={expanded}
             toggleExpanded={toggleExpanded}
+            onArchive={handleArchive}
             api={api}
           />
         )}

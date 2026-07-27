@@ -246,6 +246,24 @@ export function clearProjectStatusOverride(dir: string) {
   }
 }
 
+export function getArchivedSessions(): Set<string> {
+  try {
+    const state = readState();
+    return new Set<string>(state.archivedSessions || []);
+  } catch(e) { return new Set(); }
+}
+
+export function archiveSession(sessionId: string) {
+  try {
+    const state = readState();
+    const archived = new Set<string>(state.archivedSessions || []);
+    archived.add(sessionId);
+    state.archivedSessions = Array.from(archived);
+    writeState(state);
+    triggerSessionsMenuUpdate();
+  } catch(e) {}
+}
+
 export function cleanupStaleCacheFiles() {
   try {
     if (!fs.existsSync(STATE_DIR)) return;

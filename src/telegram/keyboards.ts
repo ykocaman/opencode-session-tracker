@@ -3,7 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import { exec } from 'child_process';
 import util from 'util';
-import { apiRef, readState, readActiveProjects, activeProjectDir } from './state';
+import { apiRef, readState, readActiveProjects, activeProjectDir, getArchivedSessions } from './state';
 
 const execAsync = util.promisify(exec);
 
@@ -243,9 +243,13 @@ export async function getSessionsKeyboard(showHistory: boolean = false) {
       return (b.time?.updated || 0) - (a.time?.updated || 0);
   });
 
+  // Same active/history split the TUI sidebar uses (staleness threshold + manual archive
+  // flag set via right-click), so a session bucketed into History in one surface is bucketed
+  // into History in the other too.
+  const archivedIds = getArchivedSessions();
   const filteredParents = parents.filter((p: any) => {
     const updatedTime = typeof p.time?.updated === 'number' ? p.time.updated : 0;
-    const isExpired = now - updatedTime >= EXPIRY_MS;
+    const isExpired = archivedIds.has(p.id) || now - updatedTime >= EXPIRY_MS;
     return showHistory ? isExpired : !isExpired;
   });
 

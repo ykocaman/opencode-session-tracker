@@ -17,6 +17,8 @@ import {
   updatePromptResponseMeta,
   getPromptStatusPath,
   triggerSessionsMenuUpdate,
+  getArchivedSessions,
+  archiveSession,
   logDebug as debug
 } from './state';
 
@@ -30,7 +32,9 @@ export {
   savePromptResponse,
   updatePromptResponseMeta,
   getPromptStatusPath,
-  triggerSessionsMenuUpdate
+  triggerSessionsMenuUpdate,
+  getArchivedSessions,
+  archiveSession
 };
 
 export {

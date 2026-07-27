@@ -473,8 +473,25 @@ export function startTelegramBot() {
      setSelectedModel(state.sync.model);
   }
 
-  const newBot = new TelegramBot(config.token, { polling: true });
+  const newBot = new TelegramBot(config.token, {
+    polling: true,
+    // Long-poll requests use a keep-alive socket with no client-side timeout by default.
+    // After a network drop (Wi-Fi handoff, sleep/wake, VPN toggle) the socket can go stale
+    // and hang forever with no error/retry, silently killing the bot until OpenCode restarts.
+    // A request timeout comfortably above the server-side long-poll wait (10s) lets stale
+    // sockets get aborted and the polling loop recover on its own.
+    request: { timeout: 30000 } as any
+  } as TelegramBot.ConstructorOptions);
   setBot(newBot);
+
+  newBot.on('polling_error', (err: any) => {
+    console.error('[Telegram] Polling error:', err?.message || err);
+  });
+  newBot.on('error', (err: any) => {
+    console.error('[Telegram] Bot error:', err?.message || err);
+    try { newBot.stopPolling(); } catch(e) {}
+    setBot(null);
+  });
 
   newBot.setMyCommands([
     { command: 'projects', description: 'List workspace projects' },

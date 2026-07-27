@@ -14,8 +14,11 @@ export interface SessionItemProps {
   setCurrentSessionId: (id: string | undefined) => void;
   expanded: () => Set<string>;
   toggleExpanded: (id: string) => void;
+  onArchive?: (id: string) => void;
   api: TuiPluginApi;
 }
+
+const MOUSE_BUTTON_RIGHT = 2;
 
 export function SessionItem(props: SessionItemProps) {
   const [status] = getStatusSignal(props.id);
@@ -44,9 +47,28 @@ export function SessionItem(props: SessionItemProps) {
     props.setCurrentSessionId(props.id);
     props.api.route.navigate("session", { sessionID: props.id });
   };
-  
+
+  const handleTitleMouseDown = (event: any) => {
+    // Right-click and ctrl+click both get eaten before the app ever sees them:
+    // right-click by the terminal's own context menu / trackpad two-finger-tap,
+    // ctrl+click by macOS's system-wide "secondary click" remap. The mouse
+    // protocol only reports 3 modifier bits (shift/alt/ctrl), and on macOS
+    // terminals Cmd is what actually lands in the "alt" bit for mouse events
+    // (Option is consumed for dead-key/composed-character input before it gets
+    // that far) — so in practice this fires on Cmd+click. Right-click kept as a
+    // bonus for terminals/configs where it does pass through.
+    const isRightClick = event?.button === MOUSE_BUTTON_RIGHT;
+    const isModifierClick = event?.button === 0 && event?.modifiers?.alt;
+    if ((isRightClick || isModifierClick) && !props.isSubagent && props.onArchive) {
+      event.preventDefault?.();
+      props.onArchive(props.id);
+      return;
+    }
+    nav();
+  };
+
   const prefix = props.isSubagent ? (props.isLastSubagent ? " └─ " : " ├─ ") : "";
-  const titleText = props.title?.slice(0, props.isSubagent ? 23 : 26) || props.id.slice(0, 8);
+  const titleText = props.title?.slice(0, props.isSubagent ? 22 : 25) || props.id.slice(0, 8);
   
   return (
     <box flexDirection="row" gap={1} flexShrink={0}>
@@ -59,7 +81,7 @@ export function SessionItem(props: SessionItemProps) {
             {props.hasSubagents ? (props.expanded().has(props.id) ? "[-] " : "[+] ") : "[-] "}
           </text>
         </Show>
-        <text fg={isCurrent() ? "white" : "gray"} onMouseDown={nav}>
+        <text fg={isCurrent() ? "white" : "gray"} onMouseDown={handleTitleMouseDown}>
           {prefix}{isCurrent() ? <b>{titleText}</b> : titleText}
         </text>
       </box>
