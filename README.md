@@ -1,8 +1,14 @@
+<div align="center">
+
 # OpenCode Session Tracker
 
 [![npm version](https://img.shields.io/npm/v/opencode-session-tracker.svg?style=flat-square)](https://www.npmjs.com/package/opencode-session-tracker)
 [![npm downloads](https://img.shields.io/npm/dm/opencode-session-tracker.svg?style=flat-square)](https://www.npmjs.com/package/opencode-session-tracker)
 [![GitHub stars](https://img.shields.io/github/stars/ykocaman/opencode-session-tracker?style=flat-square)](https://github.com/ykocaman/opencode-session-tracker/stargazers)
+
+<a href="https://www.producthunt.com/products/opencode-session-tracker?embed=true&utm_source=badge-featured&utm_medium=badge&utm_campaign=badge-opencode-session-tracker" target="_blank" rel="noopener noreferrer"><img alt="OpenCode Session Tracker - OpenCode TUI plugin &amp; Telegram Integration | Product Hunt" width="250" height="54" src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1210209&theme=light&t=1785440891271"></a>
+
+</div>
 
 One session tracker for [OpenCode](https://github.com/sst/opencode), two surfaces: a **TUI sidebar** in your terminal and a **Telegram remote control** on your phone. Both stay in sync automatically — pick up a session in one place, and it's right where you left it in the other.
 
