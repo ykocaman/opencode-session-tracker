@@ -1,3 +1,5 @@
+
+
 <div align="center">
 
 # OpenCode Session Tracker
@@ -70,7 +72,7 @@ Live prompt tracking — follow your agent's thinking and tool calls in real-tim
 
 ## 📥 Installation
 
-Install globally using the official OpenCode plugin command:
+Install globally using the official OpenCode plugin command (requires OpenCode `>=1.4.3`):
 
 ```bash
 opencode plugin opencode-session-tracker --global
