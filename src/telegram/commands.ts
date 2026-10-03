@@ -1,11 +1,16 @@
 import path from 'path';
-import fs from 'fs';
-import os from 'os';
-import { apiRef, bot, readState, readActiveProjects, activeProjectDir, setActiveProjectDir, lastProjectsMessage, setLastProjectsMessage, lastSessionsMessage, setLastSessionsMessage, lastHistoryMessage, setLastHistoryMessage, setProjectStatusOverride, clearProjectStatusOverride } from './state';
-import { registerMessageSession, escapeHtml, buildMessageWithHeaderAndFooter } from './formatters';
+import {
+  apiRef, bot, readActiveProjects, lastProjectsMessage, setLastProjectsMessage,
+  lastSessionsMessage, setLastSessionsMessage, lastHistoryMessage, setLastHistoryMessage,
+  setProjectStatusOverride, clearProjectStatusOverride,
+} from './state';
+import { registerMessageSession, escapeHtml, buildMessageWithHeaderAndFooter, toMs } from './formatters';
 import { getProjectsKeyboard, getSessionsKeyboard } from './keyboards';
 import { startTailTracking } from './tail';
 import { launchOpenCodeInstance, killOpenCodeInstance } from './launcher';
+import { getTargetDir, getActiveSessionId } from './stores';
+
+type MenuMessage = { chatId: number, messageId: number, timestamp: number } | null;
 
 async function refreshProjectsMessage() {
   if (!lastProjectsMessage) return;
@@ -16,109 +21,84 @@ async function refreshProjectsMessage() {
   }).catch(() => {});
 }
 
+/**
+ * Builds a "send a menu" command: refreshes the previous menu message in place (if any),
+ * then sends a fresh one and remembers it as the latest.
+ */
+function createMenuCommand(opts: {
+  title: string;
+  errorText: string;
+  getKeyboard: () => Promise<any[][]>;
+  getLast: () => MenuMessage;
+  setLast: (msg: MenuMessage) => void;
+}) {
+  return async (chatId: number) => {
+    try {
+      const inlineKeyboard = await opts.getKeyboard();
+      const last = opts.getLast();
+
+      if (last) {
+        bot?.editMessageText(opts.title, {
+          chat_id: last.chatId,
+          message_id: last.messageId,
+          parse_mode: 'HTML',
+          reply_markup: { inline_keyboard: inlineKeyboard }
+        }).catch(() => {});
+      }
+
+      const sentMsg = await bot?.sendMessage(chatId, opts.title, {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: inlineKeyboard }
+      });
+      if (sentMsg) {
+        opts.setLast({ chatId: sentMsg.chat.id, messageId: sentMsg.message_id, timestamp: Date.now() });
+      }
+    } catch (err) {
+      bot?.sendMessage(chatId, opts.errorText).catch(() => {});
+    }
+  };
+}
+
 export async function handleStart(chatId: number) {
   bot?.sendMessage(chatId, "👋 Welcome to OpenCode Telegram Integration! Remote session manager is active.");
 }
 
-export async function handleProjectsCommand(chatId: number) {
-  try {
-    const inlineKeyboard = await getProjectsKeyboard();
-    const txt = "📁 <b>Projects</b>";
+export const handleProjectsCommand = createMenuCommand({
+  title: "📁 <b>Projects</b>",
+  errorText: "❌ Failed to list projects.",
+  getKeyboard: getProjectsKeyboard,
+  getLast: () => lastProjectsMessage,
+  setLast: setLastProjectsMessage,
+});
 
-    if (lastProjectsMessage) {
-      bot?.editMessageText(txt, {
-        chat_id: lastProjectsMessage.chatId,
-        message_id: lastProjectsMessage.messageId,
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: inlineKeyboard }
-      }).catch(() => {});
-    }
-    
-    const sentMsg = await bot?.sendMessage(chatId, txt, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: inlineKeyboard
-      }
-    });
-    if (sentMsg) {
-       setLastProjectsMessage({ chatId: sentMsg.chat.id, messageId: sentMsg.message_id, timestamp: Date.now() });
-    }
-  } catch (err) {
-    bot?.sendMessage(chatId, "❌ Failed to list projects.").catch(() => {});
-  }
-}
+export const handleSessionsCommand = createMenuCommand({
+  title: "🗂 <b>Sessions</b>",
+  errorText: "❌ Failed to list active sessions.",
+  getKeyboard: () => getSessionsKeyboard(false),
+  getLast: () => lastSessionsMessage,
+  setLast: setLastSessionsMessage,
+});
 
-export async function handleSessionsCommand(chatId: number) {
-  try {
-    const inlineKeyboard = await getSessionsKeyboard(false);
-    const txt = "🗂 <b>Sessions</b>";
-
-    if (lastSessionsMessage) {
-      bot?.editMessageText(txt, {
-        chat_id: lastSessionsMessage.chatId,
-        message_id: lastSessionsMessage.messageId,
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: inlineKeyboard }
-      }).catch(() => {});
-    }
-    
-    const sentMsg = await bot?.sendMessage(chatId, txt, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: inlineKeyboard
-      }
-    });
-    if (sentMsg) {
-       setLastSessionsMessage({ chatId: sentMsg.chat.id, messageId: sentMsg.message_id, timestamp: Date.now() });
-    }
-  } catch (err) {
-    bot?.sendMessage(chatId, "❌ Failed to list active sessions.").catch(() => {});
-  }
-}
-
-export async function handleHistoryCommand(chatId: number) {
-  try {
-    const inlineKeyboard = await getSessionsKeyboard(true);
-    const txt = "📚 <b>Session History</b>";
-
-    if (lastHistoryMessage) {
-      bot?.editMessageText(txt, {
-        chat_id: lastHistoryMessage.chatId,
-        message_id: lastHistoryMessage.messageId,
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: inlineKeyboard }
-      }).catch(() => {});
-    }
-    
-    const sentMsg = await bot?.sendMessage(chatId, txt, {
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: inlineKeyboard
-      }
-    });
-    if (sentMsg) {
-       setLastHistoryMessage({ chatId: sentMsg.chat.id, messageId: sentMsg.message_id, timestamp: Date.now() });
-    }
-  } catch (err) {
-    bot?.sendMessage(chatId, "❌ Failed to list history sessions.").catch(() => {});
-  }
-}
+export const handleHistoryCommand = createMenuCommand({
+  title: "📚 <b>Session History</b>",
+  errorText: "❌ Failed to list history sessions.",
+  getKeyboard: () => getSessionsKeyboard(true),
+  getLast: () => lastHistoryMessage,
+  setLast: setLastHistoryMessage,
+});
 
 export async function handleTailCommand(chatId: number, sessionIdParam?: string | null) {
-  const targetDir = activeProjectDir || apiRef.state.path.directory;
-  let sessionId = sessionIdParam;
-  if (!sessionId) {
-    try { sessionId = readState().activeSessions?.[targetDir] || null; } catch(e) {}
-  }
+  const targetDir = getTargetDir();
+  const sessionId = sessionIdParam || getActiveSessionId(targetDir);
   if (!sessionId) {
     bot?.sendMessage(chatId, "⚠️ No active session. Use /sessions to select one, or specify a session ID like `/tail [sessionId]`.");
     return;
   }
-  
+
   try {
     const sD = (await apiRef.client.session.get({ sessionID: sessionId }).catch(() => null))?.data || {};
-    let title = sD.title || sessionId.slice(0, 8);
-    
+    const title = sD.title || sessionId.slice(0, 8);
+
     const trackingMsg = await bot?.sendMessage(chatId, `📋 <b>Tailing: ${escapeHtml(title)}</b>\n\n⌛ Fetching latest messages...`, {
       parse_mode: 'HTML',
       reply_markup: {
@@ -151,26 +131,23 @@ export async function sendRecap(chatId: number, messageId: number | undefined, s
     const sData = sRes?.data || sRes;
     const dir = sData?.directory || apiRef.state.path.directory;
 
-    const assistants = [...msgList].reverse().filter((m: any) => {
-      const role = (m.info || m).role;
-      return role === "assistant";
-    }).slice(0, 2);
+    const assistants = [...msgList].reverse().filter((m: any) => (m.info || m).role === "assistant").slice(0, 2);
 
     if (assistants.length === 0) return;
 
     const lastAssistant = assistants[0];
     const prevAssistant = assistants[1];
 
-    const buildAssistantText = (msg: any) =>
+    const textOf = (msg: any) =>
       (msg.parts || [])
         .filter((p: any) => p.type === "text")
         .map((p: any) => p.text || "")
         .join("")
         .trim();
 
-    let content = buildAssistantText(lastAssistant);
+    let content = textOf(lastAssistant);
     if (prevAssistant) {
-      const prevText = buildAssistantText(prevAssistant);
+      const prevText = textOf(prevAssistant);
       if (prevText) {
         content = `${prevText}\n\n${content}`;
       }
@@ -186,18 +163,9 @@ export async function sendRecap(chatId: number, messageId: number | undefined, s
         for (let j = i - 1; j >= 0; j--) {
           const pm = msgList[j];
           if ((pm.info || pm).role === 'user') {
-            userText = (pm.content || '').trim() ||
-              (pm.parts || [])
-                .filter((p: any) => p.type === "text")
-                .map((p: any) => p.text || "")
-                .join("")
-                .trim();
+            userText = (pm.content || '').trim() || textOf(pm);
             if (userText) {
-              const pTime = pm.time?.created || pm.timeCreated || pm.time?.updated || pm.timeUpdated;
-              if (pTime) {
-                const num = Number(pTime);
-                promptTimestamp = num < 10000000000 ? num * 1000 : num;
-              }
+              promptTimestamp = toMs(pm.time?.created || pm.timeCreated || pm.time?.updated || pm.timeUpdated) || promptTimestamp;
             }
             break;
           }
@@ -233,40 +201,8 @@ export async function sendRecap(chatId: number, messageId: number | undefined, s
   } catch(e) {}
 }
 
-export async function handleCloseCommand(chatId: number) {
-  const currentDir = apiRef?.state?.path?.directory;
-  const targetDir = activeProjectDir || currentDir;
-
-  if (!targetDir) {
-    refreshProjectsMessage();
-    return;
-  }
-
-  const active = readActiveProjects(15000);
-
-  if (!active[targetDir]) {
-    refreshProjectsMessage();
-    return;
-  }
-
-  if (Object.keys(active).length <= 1) {
-    return;
-  }
-
-  const result = killOpenCodeInstance(targetDir, process.pid);
-
-  if (result.killed) {
-    setProjectStatusOverride(targetDir, 'closing');
-    refreshProjectsMessage();
-    setTimeout(() => {
-      clearProjectStatusOverride(targetDir);
-      refreshProjectsMessage();
-    }, 10000);
-  }
-}
-
 export async function handleRestartCommand(chatId: number) {
-  const target = activeProjectDir || apiRef?.state?.path?.directory;
+  const target = getTargetDir();
   if (!target) {
     bot?.sendMessage(chatId, "⚠️ No project selected. Use /projects to select one.").catch(() => {});
     return;

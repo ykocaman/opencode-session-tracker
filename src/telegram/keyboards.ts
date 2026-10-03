@@ -1,47 +1,52 @@
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import util from 'util';
+import { DAY_MS, groupByParent, isListableSession, updatedAt } from '../sessions';
 import { apiRef, readState, readActiveProjects, activeProjectDir, getArchivedSessions } from './state';
 
-const execAsync = util.promisify(exec);
+const execFileAsync = util.promisify(execFile);
 
 export const projectIds = new Map<string, string>();
-export const sessionIds = new Map<string, string>();
 export const modelIds = new Map<string, string>();
+
+const ONLINE_WINDOW_MS = 8000;
+const ACTIVE_PROJECTS_WINDOW_MS = 45000;
+const STATUS_OVERRIDE_WINDOW_MS = 15000;
+const MAX_SESSION_BUTTONS = 15;
+
+/** Short stable id for callback_data (Telegram limits it to 64 bytes). */
+export function shortHash(text: string): string {
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) + hash) + text.charCodeAt(i);
+  }
+  return Math.abs(hash).toString(16);
+}
 
 export function getSessionStatus(sessionId: string): string {
   try {
-    if (apiRef?.state?.session?.question) {
-      const q = apiRef.state.session.question(sessionId);
-      if (q && q.length > 0) return "ask";
+    const session = apiRef?.state?.session;
+    if (session?.question?.(sessionId)?.length > 0) return "ask";
+    if (session?.permission?.(sessionId)?.length > 0) return "perm";
+    const st = session?.status?.(sessionId);
+    if (st) {
+      const localStatus = typeof st === "string" ? st : (st.type || "idle");
+      if (localStatus !== "idle") return localStatus;
     }
-    if (apiRef?.state?.session?.permission) {
-      const p = apiRef.state.session.permission(sessionId);
-      if (p && p.length > 0) return "perm";
-    }
-    if (apiRef?.state?.session?.status) {
-      const st = apiRef.state.session.status(sessionId);
-      if (st) {
-          const localStatus = typeof st === "string" ? st : (st.type || "idle");
-          if (localStatus !== "idle") return localStatus;
-      }
-    }
-  } catch(e) {}
-  
+  } catch (e) {}
+
   try {
-      const state = readState();
-      if (state.statuses && state.statuses[sessionId]) {
-          return state.statuses[sessionId];
-      }
-  } catch(e) {}
-  
+    const saved = readState().statuses?.[sessionId];
+    if (saved) return saved;
+  } catch (e) {}
+
   return "idle";
 }
 
 export function statusIcon(status: string): string {
-  switch(status) {
+  switch (status) {
     case "busy": case "running": return "🟢";
     case "retry": case "waiting": return "🟡";
     case "ask": case "perm": return "🟣";
@@ -50,108 +55,73 @@ export function statusIcon(status: string): string {
   }
 }
 
-export function getModelPriority(providerID: string, modelID: string, favorites: string[], recents: string[]): number {
-  const modelStr = `${providerID}/${modelID}`;
-  if (favorites.includes(modelStr)) return 100 - favorites.indexOf(modelStr);
-  if (recents.includes(modelStr)) return 50 - recents.indexOf(modelStr);
-  if (providerID === 'anthropic' && modelID.includes('claude-3-5-sonnet')) return 10;
-  if (providerID === 'gemini' && modelID.includes('gemini-2.5-pro')) return 9;
-  if (providerID === 'gemini' && modelID.includes('gemini-2.5-flash')) return 8;
-  return 0;
+const isInactiveStatus = (st: string) => st === 'idle' || st === 'done' || st === 'error' || st === '';
+
+/** Current project dir plus its sibling directories (e.g. everything under ~/Projects). */
+function discoverSiblingProjects(currentDir: string): string[] {
+  try {
+    const parentDir = path.dirname(currentDir);
+    if (!fs.existsSync(parentDir)) return [];
+    return fs.readdirSync(parentDir, { withFileTypes: true })
+      .filter(d => d.isDirectory() && !d.name.startsWith('.') && d.name !== 'node_modules')
+      .map(d => path.join(parentDir, d.name));
+  } catch (e) {
+    console.error("[Telegram] Sibling project directory scan failed:", e);
+    return [];
+  }
 }
 
 export async function getProjectsKeyboard() {
   const dirs = new Set<string>();
-  
-  if (apiRef?.state?.path?.directory) {
-      dirs.add(apiRef.state.path.directory);
-      
-      // Auto-scan parent directory to discover other sibling projects (e.g. under ~/Projects)
-      try {
-        const parentDir = path.dirname(apiRef.state.path.directory);
-        if (fs.existsSync(parentDir)) {
-          const siblings = fs.readdirSync(parentDir, { withFileTypes: true });
-          for (const sibling of siblings) {
-            if (sibling.isDirectory() && !sibling.name.startsWith('.') && sibling.name !== 'node_modules') {
-              dirs.add(path.join(parentDir, sibling.name));
-            }
-          }
-        }
-      } catch(e) {
-        console.error("[Telegram] Sibling project directory scan failed:", e);
-      }
+  const currentDir = apiRef?.state?.path?.directory;
+
+  if (currentDir) {
+    dirs.add(currentDir);
+    discoverSiblingProjects(currentDir).forEach(d => dirs.add(d));
   }
-  
+
   const now = Date.now();
-  const active = readActiveProjects(45000);
-  for (const dir of Object.keys(active)) {
-      dirs.add(dir);
-  }
-  
+  const active = readActiveProjects(ACTIVE_PROJECTS_WINDOW_MS);
+  Object.keys(active).forEach(d => dirs.add(d));
+
   try {
-      const response = await apiRef.client.session.list({ query: { limit: 100 } });
-      let sessions = response.data || response || [];
-      if (Array.isArray(sessions)) {
-          sessions.forEach((s: any) => {
-              if (s.directory) dirs.add(s.directory);
-          });
-      }
-  } catch(e) {}
-  
-  // Sort directories:
-  // 1. Current selected goes first.
-  // 2. Active running (online) goes next.
-  // 3. Offline goes after.
-  // 4. Alphabetical by folder basename.
+    const response = await apiRef.client.session.list({ query: { limit: 100 } });
+    const sessions = response.data || response || [];
+    if (Array.isArray(sessions)) {
+      sessions.forEach((s: any) => { if (s.directory) dirs.add(s.directory); });
+    }
+  } catch (e) {}
+
+  const isOnline = (dir: string) => now - (active[dir]?.timestamp || 0) < ONLINE_WINDOW_MS;
+
+  // Online projects first, then alphabetical by folder name.
   const sortedDirs = Array.from(dirs).sort((a, b) => {
-    const lastTsA = active[a]?.timestamp || 0;
-    const lastTsB = active[b]?.timestamp || 0;
-    const isOnlineA = (now - lastTsA < 8000);
-    const isOnlineB = (now - lastTsB < 8000);
-    if (isOnlineA && !isOnlineB) return -1;
-    if (!isOnlineA && isOnlineB) return 1;
-
-    const nameA = path.basename(a).toLowerCase();
-    const nameB = path.basename(b).toLowerCase();
-    return nameA.localeCompare(nameB);
+    const onlineA = isOnline(a);
+    const onlineB = isOnline(b);
+    if (onlineA !== onlineB) return onlineA ? -1 : 1;
+    return path.basename(a).toLowerCase().localeCompare(path.basename(b).toLowerCase());
   });
 
-  const inlineKeyboard: any[][] = [];
-  
-  sortedDirs.forEach(dir => {
-      const isSelected = (activeProjectDir === dir) || (!activeProjectDir && dir === apiRef?.state?.path?.directory);
-      const title = path.basename(dir) || dir;
-      const lastTs = active[dir]?.timestamp || 0;
-      const isOnline = (now - lastTs < 8000);
+  const overrides = readState().projectStatusOverrides || {};
+  const inlineKeyboard: any[][] = sortedDirs.map(dir => {
+    const isSelected = (activeProjectDir === dir) || (!activeProjectDir && dir === currentDir);
+    const title = path.basename(dir) || dir;
 
-      // Check for status overrides (processing = yellow, closing = gray)
-      const overrides = readState().projectStatusOverrides || {};
-      const override = overrides[dir];
-      let statusIcon: string;
-      if (override && (now - override.timestamp < 15000)) {
-        statusIcon = override.status === 'processing' ? '🟡' : '⚪';
-      } else {
-        statusIcon = isOnline ? '🟢' : '⚪';
-      }
-      const arrow = isSelected && activeProjectDir ? '→ ' : '';
-      const buttonText = `${arrow}${statusIcon} ${title}`;
-      
-      let hash = 5381;
-      for (let i = 0; i < dir.length; i++) {
-        hash = ((hash << 5) + hash) + dir.charCodeAt(i);
-      }
-      const shortId = Math.abs(hash).toString(16);
-      
-      projectIds.set(shortId, dir);
-      inlineKeyboard.push([{ text: buttonText, callback_data: `proj_select_${shortId}` }]);
+    // Status overrides: processing = yellow, closing = gray
+    const override = overrides[dir];
+    const icon = override && (now - override.timestamp < STATUS_OVERRIDE_WINDOW_MS)
+      ? (override.status === 'processing' ? '🟡' : '⚪')
+      : (isOnline(dir) ? '🟢' : '⚪');
+    const arrow = isSelected && activeProjectDir ? '→ ' : '';
+
+    const shortId = shortHash(dir);
+    projectIds.set(shortId, dir);
+    return [{ text: `${arrow}${icon} ${title}`, callback_data: `proj_select_${shortId}` }];
   });
 
-  const currentSelected = activeProjectDir || apiRef?.state?.path?.directory;
+  const currentSelected = activeProjectDir || currentDir;
   if (currentSelected) {
-    const name = path.basename(currentSelected);
-    const lastTs = active[currentSelected]?.timestamp || 0;
-    const isOnline = (now - lastTs < 8000);
-    if (isOnline) {
+    if (isOnline(currentSelected)) {
       const row: any[] = [{ text: '📋 List Sessions', callback_data: 'proj_list_sessions' }];
       if (Object.keys(active).length > 1) {
         row.push({ text: '❌ Close', callback_data: 'proj_close' });
@@ -161,124 +131,81 @@ export async function getProjectsKeyboard() {
       inlineKeyboard.push([{ text: '🚀 Launch OpenCode', callback_data: 'proj_launch' }]);
     }
   }
-  
+
   return inlineKeyboard;
+}
+
+async function fetchSessionsFromSqlite(queryDir: string): Promise<any[]> {
+  try {
+    const dbPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
+    if (!fs.existsSync(dbPath)) return [];
+
+    const query = `SELECT id, title, parent_id as parentID, time_updated as timeUpdated, time_archived as timeArchived FROM session WHERE directory = '${queryDir.replace(/'/g, "''")}' ORDER BY time_updated DESC LIMIT 50`;
+    const { stdout } = await execFileAsync('sqlite3', ['-json', dbPath, query]);
+    if (!stdout.trim()) return [];
+
+    return JSON.parse(stdout).map((row: any) => ({
+      id: row.id,
+      title: row.title,
+      parentID: row.parentID,
+      time: { updated: row.timeUpdated },
+      status: row.timeArchived ? "deleted" : "active"
+    }));
+  } catch (e) {
+    console.error("[Telegram] SQLite session fetch failed:", e);
+    return [];
+  }
+}
+
+async function fetchSessionsFromApi(queryDir: string): Promise<any[]> {
+  try {
+    const response = await apiRef.client.session.list({ query: { directory: queryDir, limit: 50 } });
+    const sessions = response.data || response || [];
+    return Array.isArray(sessions) ? sessions : [];
+  } catch (e) {
+    return [];
+  }
 }
 
 export async function getSessionsKeyboard(showHistory: boolean = false) {
   const queryDir = activeProjectDir || apiRef.state.path.directory;
-  let sessions: any[] = [];
-  
-  try {
-    const dbPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
-    if (fs.existsSync(dbPath)) {
-      const query = `SELECT id, title, parent_id as parentID, time_updated as timeUpdated, time_archived as timeArchived FROM session WHERE directory = '${queryDir.replace(/'/g, "''")}' ORDER BY time_updated DESC LIMIT 50`;
-      const { stdout } = await execAsync(`sqlite3 -json "${dbPath}" "${query}"`);
-      if (stdout.trim()) {
-        const rawSessions = JSON.parse(stdout);
-        sessions = rawSessions.map((row: any) => ({
-          id: row.id,
-          title: row.title,
-          parentID: row.parentID,
-          time: { updated: row.timeUpdated },
-          status: row.timeArchived ? "deleted" : "active"
-        }));
-      }
-    }
-  } catch (e) {
-    console.error("[Telegram] SQLite session fetch failed:", e);
-  }
 
-  // Fallback to API
-  if (sessions.length === 0) {
-    try {
-      const response = await apiRef.client.session.list({ query: { directory: queryDir, limit: 50 } });
-      sessions = response.data || response || [];
-      if (!Array.isArray(sessions)) sessions = [];
-    } catch(e) {}
-  }
+  let sessions = await fetchSessionsFromSqlite(queryDir);
+  if (sessions.length === 0) sessions = await fetchSessionsFromApi(queryDir);
 
   const now = Date.now();
-  const EXPIRY_MS = 24 * 60 * 60 * 1000;
-  const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-  
-  sessions = sessions.filter((s: any) => {
-    if (s.status === "deleted") return false;
-    if (!s.title || s.title.trim() === "") return false;
-    const updatedTime = typeof s.time?.updated === 'number' ? s.time.updated : 0;
-    return now - updatedTime < WEEK_MS;
-  });
-
-  const sessionsMap = new Map();
-  sessions.forEach((s: any) => {
-      s.subagents = [];
-      sessionsMap.set(s.id, s);
-  });
-
-  const findUltimateParent = (s: any) => {
-      let current = s;
-      let lastVisible = null;
-      const visited = new Set();
-      while (current.parentID && !visited.has(current.id)) {
-          visited.add(current.id);
-          const parent = sessionsMap.get(current.parentID);
-          if (!parent) break;
-          lastVisible = parent;
-          current = parent;
-      }
-      return lastVisible;
-  };
-
-  const parents: any[] = [];
-  sessions.forEach((s: any) => {
-      const p = findUltimateParent(s);
-      if (p) {
-          p.subagents.push(s);
-      } else {
-          parents.push(s);
-      }
-  });
-
-  parents.sort((a: any, b: any) => {
-      return (b.time?.updated || 0) - (a.time?.updated || 0);
-  });
+  sessions = sessions.filter(s => isListableSession(s, now));
 
   // Same active/history split the TUI sidebar uses (staleness threshold + manual archive
   // flag set via right-click), so a session bucketed into History in one surface is bucketed
   // into History in the other too.
   const archivedIds = getArchivedSessions();
-  const filteredParents = parents.filter((p: any) => {
-    const updatedTime = typeof p.time?.updated === 'number' ? p.time.updated : 0;
-    const isExpired = archivedIds.has(p.id) || now - updatedTime >= EXPIRY_MS;
-    return showHistory ? isExpired : !isExpired;
-  });
+  const filteredParents = groupByParent(sessions)
+    .filter(p => {
+      const isExpired = archivedIds.has(p.id) || now - updatedAt(p) >= DAY_MS;
+      return showHistory ? isExpired : !isExpired;
+    })
+    .sort((a, b) => {
+      const activeA = !isInactiveStatus(getSessionStatus(a.id));
+      const activeB = !isInactiveStatus(getSessionStatus(b.id));
+      if (activeA !== activeB) return activeA ? -1 : 1;
+      return (b.time?.updated || 0) - (a.time?.updated || 0);
+    });
 
-  filteredParents.sort((a: any, b: any) => {
-    const stA = getSessionStatus(a.id);
-    const stB = getSessionStatus(b.id);
-    const isActiveA = stA !== 'idle' && stA !== 'done' && stA !== 'error' && stA !== '';
-    const isActiveB = stB !== 'idle' && stB !== 'done' && stB !== 'error' && stB !== '';
-    
-    if (isActiveA && !isActiveB) return -1;
-    if (!isActiveA && isActiveB) return 1;
-    return (b.time?.updated || 0) - (a.time?.updated || 0);
-  });
+  let currentActive: string | null = null;
+  try { currentActive = readState().activeSessions?.[queryDir] || null; } catch (e) {}
 
   const inlineKeyboard: any[][] = [];
-  let currentActive = null;
-  try { currentActive = readState().activeSessions?.[queryDir] || null; } catch(e) {}
-  
+
   if (!showHistory) {
-    const isHomeSelected = currentActive === null;
-    inlineKeyboard.push([{ text: `${isHomeSelected ? '→ ' : ''}🏠 Home (New Session)`, callback_data: "nav_home" }]);
+    inlineKeyboard.push([{ text: `${currentActive === null ? '→ ' : ''}🏠 Home (New Session)`, callback_data: "nav_home" }]);
   }
-  
-  filteredParents.slice(0, 15).forEach((p: any) => {
-    const isCurrent = currentActive === p.id;
-    const st = getSessionStatus(p.id);
-    const ball = statusIcon(st);
+
+  filteredParents.slice(0, MAX_SESSION_BUTTONS).forEach(p => {
+    const arrow = currentActive === p.id ? '→ ' : '';
+    const ball = statusIcon(getSessionStatus(p.id));
     const title = (p.title || p.id).slice(0, 20);
-    inlineKeyboard.push([{ text: `${isCurrent ? '→ ' : ''}${ball} ${title}`, callback_data: `nav_${p.id}` }]);
+    inlineKeyboard.push([{ text: `${arrow}${ball} ${title}`, callback_data: `nav_${p.id}` }]);
   });
 
   if (currentActive && !showHistory) {
@@ -291,6 +218,6 @@ export async function getSessionsKeyboard(showHistory: boolean = false) {
       inlineKeyboard.push([{ text: "📝 Get Recap", callback_data: "sess_recap" }]);
     }
   }
-  
+
   return inlineKeyboard;
 }

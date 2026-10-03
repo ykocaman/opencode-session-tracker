@@ -1,11 +1,6 @@
 import fs from 'fs';
-import { bot, apiRef, readState, writeState, activeProjectDir, sessionFinalizers, lastHistoryMessage, lastSessionsMessage } from './state';
-import { activeTails } from './bot';
-import { getPromptStatusPath } from './state';
-import { buildMessageWithHeaderAndFooter, buildStatusFromParts, escapeHtml, formatThinkingText } from './formatters';
-import { handleTailCommand, handleSessionsCommand, handleHistoryCommand } from './commands';
-import { getSessionsKeyboard } from './keyboards';
-
+import { bot, apiRef, getPromptStatusPath } from './state';
+import { buildMessageWithHeaderAndFooter, buildStatusFromParts, escapeHtml, formatDuration, toMs } from './formatters';
 
 export interface TailTracking {
   sessionId: string;
@@ -17,6 +12,39 @@ export interface TailTracking {
   timer: any;
   hasStartedRunning?: boolean;
   startedAt: number;
+}
+
+export const activeTails = new Map<number, TailTracking>();
+
+const POLL_INTERVAL_MS = 2000;
+const EDIT_THROTTLE_MS = 1200;
+const MAX_MESSAGE_LEN = 4000;
+const IDLE_START_GRACE_MS = 15000;
+const EXPIRY_MS = 30 * 60 * 1000;
+
+const roleOf = (m: any): string => (m.info || m).role;
+
+/** Text of the last prompt status file written by the plugin, if any. */
+function readLiveStatus(sessionId: string): string {
+  const statusFile = getPromptStatusPath(sessionId);
+  if (!fs.existsSync(statusFile)) return '';
+  try {
+    const data = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
+    if (data.isComplete) return data.text || '';
+    return data.status || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function computeAssistantDuration(msgs: any[], lastAssistant: any): string {
+  const assistantIndex = msgs.findIndex(m => (m.id || m.requestID) === (lastAssistant.id || lastAssistant.requestID));
+  const lastUserMsg = assistantIndex > 0 ? msgs[assistantIndex - 1] : null;
+  if (!lastUserMsg) return '';
+
+  const startMs = toMs(lastUserMsg.time?.created || lastUserMsg.timeCreated || lastUserMsg.time?.updated || lastUserMsg.timeUpdated);
+  const endMs = toMs(lastAssistant.time?.updated || lastAssistant.timeUpdated || lastAssistant.time?.created || lastAssistant.timeCreated);
+  return startMs && endMs && endMs >= startMs ? formatDuration((endMs - startMs) / 1000) : '';
 }
 
 export async function getSessionActiveContent(
@@ -35,95 +63,74 @@ export async function getSessionActiveContent(
 
   const statusRes = await apiRef.client.session.status({ directory }).catch(() => null);
   const statuses = statusRes?.data || statusRes || {};
-  const sessionStatus = statuses[sessionId];
-  const statusType = sessionStatus?.type || 'idle';
+  const statusType = statuses[sessionId]?.type || 'idle';
 
-  let activeText = '⏳ Processing...';
   let lastAssistant: any = null;
   let historyMsgs = msgs;
   let lastMsgIsAssistant = false;
 
   if (msgs.length > 0) {
-    const lastMsg = msgs[msgs.length - 1];
-    if ((lastMsg.info || lastMsg).role === 'assistant') {
-      lastAssistant = lastMsg;
+    if (roleOf(msgs[msgs.length - 1]) === 'assistant') {
+      lastAssistant = msgs[msgs.length - 1];
       historyMsgs = msgs.slice(0, -1);
       lastMsgIsAssistant = true;
     } else {
-      lastAssistant = [...msgs].reverse().find((m: any) => (m.info || m).role === 'assistant') || null;
+      lastAssistant = [...msgs].reverse().find(m => roleOf(m) === 'assistant') || null;
     }
   }
 
-  let lastUserMsg: any = null;
-  if (lastAssistant) {
-    const assistantIndex = msgs.findIndex(m => (m.id || m.requestID) === (lastAssistant.id || lastAssistant.requestID));
-    if (assistantIndex > 0) {
-      lastUserMsg = msgs[assistantIndex - 1];
-    }
-  }
+  const calculatedDurationStr = lastAssistant ? computeAssistantDuration(msgs, lastAssistant) : '';
 
-  function getMs(ts: any): number {
-    if (!ts) return 0;
-    const num = Number(ts);
-    if (isNaN(num)) return 0;
-    if (num < 10000000000) return num * 1000;
-    return num;
-  }
+  const fallbackText = statusType === 'idle' ? '✅ Done' : '⏳ Processing...';
+  const activeText = readLiveStatus(sessionId)
+    || (lastAssistant ? buildStatusFromParts(lastAssistant.parts || []) : fallbackText);
 
-  let calculatedDurationStr = '';
-  if (lastAssistant && lastUserMsg) {
-    const startMs = getMs(lastUserMsg.time?.created || lastUserMsg.timeCreated || lastUserMsg.time?.updated || lastUserMsg.timeUpdated);
-    const endMs = getMs(lastAssistant.time?.updated || lastAssistant.timeUpdated || lastAssistant.time?.created || lastAssistant.timeCreated);
-    if (startMs && endMs && endMs >= startMs) {
-      const sec = (endMs - startMs) / 1000;
-      calculatedDurationStr = sec < 60 ? `${sec.toFixed(1)}s` : `${Math.floor(sec/60)}m ${Math.round(sec%60)}s`;
-    }
-  }
-
-  let liveStatus = '';
-  const statusFile = getPromptStatusPath(sessionId);
-  if (fs.existsSync(statusFile)) {
-    try {
-      const data = JSON.parse(fs.readFileSync(statusFile, 'utf8'));
-      if (data.isComplete) {
-        liveStatus = data.text || '';
-      } else if (data.status) {
-        liveStatus = data.status;
-      }
-    } catch(e) {}
-  }
-
-  if (statusType === 'idle') {
-    if (liveStatus) {
-      activeText = liveStatus;
-    } else if (lastAssistant) {
-      activeText = buildStatusFromParts(lastAssistant.parts || []);
-    } else {
-      activeText = '✅ Done';
-    }
-  } else {
-    if (liveStatus) {
-      activeText = liveStatus;
-    } else if (lastAssistant) {
-      activeText = buildStatusFromParts(lastAssistant.parts || []);
-    } else {
-      activeText = '⏳ Processing...';
-    }
-  }
-
-  return {
-    activeText,
-    lastAssistant,
-    statusType,
-    historyMsgs,
-    lastMsgIsAssistant,
-    calculatedDurationStr
-  };
+  return { activeText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant, calculatedDurationStr };
 }
 
 export function notifySessionIdle(sessionId: string) {
   // No-op since prompt tracking is removed in favor of persistent tail logs
 }
+
+/** When the parent is idle, an active child/sub-session keeps the tail alive. */
+async function resolveEffectiveStatus(sessionId: string, directory: string, statusType: string): Promise<string> {
+  if (statusType !== 'idle') return statusType;
+  try {
+    const listRes = await (apiRef.client.session as any).list({ query: { directory, limit: 50 } }).catch(() => null);
+    const sessions = listRes?.data || listRes || [];
+    if (!Array.isArray(sessions)) return statusType;
+
+    const children = sessions.filter((s: any) => s.parentID === sessionId && s.status !== 'deleted');
+    if (children.length === 0) return statusType;
+
+    const childStatuses = (await apiRef.client.session.status({ directory }).catch(() => null))?.data || {};
+    const hasActiveChild = children.some((s: any) => {
+      const st = childStatuses[s.id]?.type || s.status || 'idle';
+      return st !== 'idle' && st !== 'deleted' && st !== 'error';
+    });
+    if (hasActiveChild) return 'running';
+  } catch (e) { /* child check best-effort */ }
+  return statusType;
+}
+
+function renderHistoryMessage(m: any): { role: string; text: string } {
+  const role = roleOf(m);
+  if (role === 'assistant') {
+    return { role, text: buildStatusFromParts(m.parts || []) };
+  }
+  const rawText = (m.parts || [])
+    .map((p: any) => {
+      if (p.type === 'text') return p.text || '';
+      if (p.type === 'tool_result') return p.content || '';
+      return '';
+    })
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+  return { role, text: escapeHtml(rawText.length > 300 ? rawText.slice(0, 300) + '...' : rawText) };
+}
+
+const ROLE_ICONS: Record<string, string> = { user: '👤', assistant: '🤖' };
 
 export function startTailTracking(
   sessionId: string,
@@ -131,7 +138,6 @@ export function startTailTracking(
   trackingMessageId: number,
   directory: string
 ) {
-
   const tracking: TailTracking = {
     sessionId,
     chatId,
@@ -145,65 +151,45 @@ export function startTailTracking(
   };
   activeTails.set(trackingMessageId, tracking);
 
-  const EDIT_THROTTLE_MS = 1200;
   let pendingEdit: ReturnType<typeof setTimeout> | null = null;
 
-  function editMessageDirectly(text: string) {
-    const safeText = text.slice(0, 4000);
-    tracking.lastText = safeText;
-    if (pendingEdit) { clearTimeout(pendingEdit); pendingEdit = null; }
-    bot?.editMessageText(safeText, {
+  // retryWithHtml: whether the fallback attempt keeps parse_mode HTML (final edits) or drops it (live edits)
+  function sendEdit(text: string, retryWithHtml: boolean) {
+    const edit = (parseMode?: 'HTML') => bot?.editMessageText(text, {
       chat_id: chatId,
       message_id: trackingMessageId,
-      parse_mode: 'HTML',
+      ...(parseMode ? { parse_mode: parseMode } : {}),
       reply_markup: {
         inline_keyboard: tracking.isComplete ? [] : [[{ text: '❌ Stop Tailing', callback_data: `stop_tracking_${trackingMessageId}` }]]
       }
-    }).catch((err: any) => {
-      const errMsg = err?.message || String(err);
-      if (errMsg.includes("message is not modified")) return;
-      bot?.editMessageText(safeText, {
-        chat_id: chatId,
-        message_id: trackingMessageId,
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: tracking.isComplete ? [] : [[{ text: '❌ Stop Tailing', callback_data: `stop_tracking_${trackingMessageId}` }]]
-        }
-      }).catch(() => {});
     });
+    edit('HTML')?.catch((err: any) => {
+      if ((err?.message || String(err)).includes('message is not modified')) return;
+      edit(retryWithHtml ? 'HTML' : undefined)?.catch(() => {});
+    });
+  }
+
+  function editMessageDirectly(text: string) {
+    const safeText = text.slice(0, MAX_MESSAGE_LEN);
+    tracking.lastText = safeText;
+    if (pendingEdit) { clearTimeout(pendingEdit); pendingEdit = null; }
+    sendEdit(safeText, true);
   }
 
   function scheduleEdit(text: string) {
     if (tracking.isComplete) return;
-    const safeText = text.slice(0, 4000);
+    const safeText = text.slice(0, MAX_MESSAGE_LEN);
     if (safeText === tracking.lastText) return;
     tracking.lastText = safeText;
 
     if (pendingEdit) clearTimeout(pendingEdit);
     const sinceLastEdit = Date.now() - tracking.lastEditAt;
-    const delay = sinceLastEdit >= EDIT_THROTTLE_MS ? 0 : EDIT_THROTTLE_MS - sinceLastEdit;
+    const delay = Math.max(0, EDIT_THROTTLE_MS - sinceLastEdit);
 
     pendingEdit = setTimeout(() => {
       if (tracking.isComplete && tracking.lastText === safeText) return;
       tracking.lastEditAt = Date.now();
-      bot?.editMessageText(safeText, {
-        chat_id: chatId,
-        message_id: trackingMessageId,
-        parse_mode: 'HTML',
-        reply_markup: {
-          inline_keyboard: tracking.isComplete ? [] : [[{ text: '❌ Stop Tailing', callback_data: `stop_tracking_${trackingMessageId}` }]]
-        }
-      }).catch((err: any) => {
-        const errMsg = err?.message || String(err);
-        if (errMsg.includes("message is not modified")) return;
-        bot?.editMessageText(safeText, {
-          chat_id: chatId,
-          message_id: trackingMessageId,
-          reply_markup: {
-            inline_keyboard: tracking.isComplete ? [] : [[{ text: '❌ Stop Tailing', callback_data: `stop_tracking_${trackingMessageId}` }]]
-          }
-        }).catch(() => {});
-      });
+      sendEdit(safeText, false);
     }, delay);
   }
 
@@ -213,87 +199,39 @@ export function startTailTracking(
   let frozenDuration = '';
 
   const messageCache = new Map<string, { role: string, text: string }>();
-  let messageOrder: string[] = [];
+  const messageOrder: string[] = [];
 
   tracking.timer = setInterval(async () => {
     try {
       if (tracking.isComplete) return;
       const { activeText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant, calculatedDurationStr } = await getSessionActiveContent(sessionId, directory);
-
-      // ponytail: when parent is idle, check for active child/sub-sessions to keep tail alive
-      let effectiveStatusType = statusType;
-      if (statusType === 'idle') {
-        try {
-          const listRes = await (apiRef.client.session as any).list({ query: { directory, limit: 50 } }).catch(() => null);
-          const sessions = listRes?.data || listRes || [];
-          if (Array.isArray(sessions)) {
-            const children = sessions.filter((s: any) => s.parentID === sessionId && s.status !== 'deleted');
-            if (children.length > 0) {
-              const childStatuses = (await apiRef.client.session.status({ directory }).catch(() => null))?.data || {};
-              const hasActiveChild = children.some((s: any) => {
-                const st = childStatuses[s.id]?.type || s.status || 'idle';
-                return st !== 'idle' && st !== 'deleted' && st !== 'error';
-              });
-              if (hasActiveChild) effectiveStatusType = 'running';
-            }
-          }
-        } catch(e) {/* child check best-effort */}
-      }
+      const effectiveStatusType = await resolveEffectiveStatus(sessionId, directory, statusType);
 
       // Add new history messages to our local cache
       historyMsgs.forEach((m: any) => {
         const msgId = m.id || m.requestID || String(m.time?.updated || m.timeUpdated || Math.random());
-        if (!messageCache.has(msgId)) {
-          const role = (m.info || m).role;
-          let cleanText = '';
-          
-          if (role === 'assistant') {
-            cleanText = buildStatusFromParts(m.parts || []);
-          } else {
-            const rawText = (m.parts || [])
-              .map((p: any) => {
-                if (p.type === 'text') return p.text || '';
-                if (p.type === 'tool_result') return p.content || '';
-                return '';
-              })
-              .filter(Boolean)
-              .join('\n')
-              .trim();
-            cleanText = escapeHtml(rawText.length > 300 ? rawText.slice(0, 300) + '...' : rawText);
-          }
-          
-          if (cleanText) {
-            messageCache.set(msgId, { role, text: cleanText });
-            messageOrder.push(msgId);
-          }
+        if (messageCache.has(msgId)) return;
+        const rendered = renderHistoryMessage(m);
+        if (rendered.text) {
+          messageCache.set(msgId, rendered);
+          messageOrder.push(msgId);
         }
       });
 
       // Keep only the last 1 message in history (the last user prompt)
-      if (messageOrder.length > 1) {
-        const toRemove = messageOrder.length - 1;
-        for (let i = 0; i < toRemove; i++) {
-          const id = messageOrder.shift();
-          if (id) messageCache.delete(id);
-        }
+      while (messageOrder.length > 1) {
+        messageCache.delete(messageOrder.shift()!);
       }
 
-      let formattedHistory = '';
-      messageOrder.forEach((msgId) => {
-        const cached = messageCache.get(msgId);
-        if (cached) {
-          const icon = cached.role === 'user' ? '👤' : (cached.role === 'assistant' ? '🤖' : '❓');
-          formattedHistory += `${icon} ${cached.text}\n\n`;
-        }
-      });
+      const formattedHistory = messageOrder
+        .map(id => messageCache.get(id))
+        .filter(Boolean)
+        .map(c => `${ROLE_ICONS[c!.role] || '❓'} ${c!.text}\n\n`)
+        .join('');
 
-      let formattedActive = '';
-      if (effectiveStatusType !== 'idle' || lastMsgIsAssistant) {
-        formattedActive = `🤖 ${activeText}\n\n`;
-      }
-
+      const formattedActive = (effectiveStatusType !== 'idle' || lastMsgIsAssistant) ? `🤖 ${activeText}\n\n` : '';
       const contentText = `${formattedHistory}${formattedActive}`.trim();
-      
+
       if (contentText !== lastFormattedContent || effectiveStatusType !== 'idle') {
         lastActivityTimestamp = Date.now();
         lastFormattedContent = contentText;
@@ -302,46 +240,36 @@ export function startTailTracking(
       // Manage duration tracking and track if prompt has started running
       if (effectiveStatusType !== 'idle') {
         tracking.hasStartedRunning = true;
-        if (!promptStartedAt) {
-          promptStartedAt = Date.now();
-        }
+        if (!promptStartedAt) promptStartedAt = Date.now();
         frozenDuration = '';
-      } else {
-        if (promptStartedAt) {
-          const totalSec = (Date.now() - promptStartedAt) / 1000;
-          frozenDuration = totalSec < 60 ? `${totalSec.toFixed(1)}s` : `${Math.floor(totalSec/60)}m ${Math.round(totalSec%60)}s`;
-          promptStartedAt = null;
-        } else if (calculatedDurationStr) {
-          frozenDuration = calculatedDurationStr;
-        }
+      } else if (promptStartedAt) {
+        frozenDuration = formatDuration((Date.now() - promptStartedAt) / 1000);
+        promptStartedAt = null;
+      } else if (calculatedDurationStr) {
+        frozenDuration = calculatedDurationStr;
       }
 
-      const durationStr = promptStartedAt 
-        ? (() => {
-            const sec = (Date.now() - promptStartedAt) / 1000;
-            return sec < 60 ? `${sec.toFixed(1)}s` : `${Math.floor(sec/60)}m ${Math.round(sec%60)}s`;
-          })()
+      const durationStr = promptStartedAt
+        ? formatDuration((Date.now() - promptStartedAt) / 1000)
         : (frozenDuration || '0.0s');
 
       // Finalize tail if session goes idle (and has started running, or has been idle for 15s since tail started)
       const timeSinceStart = Date.now() - tracking.startedAt;
-      const isSessionCompleted = effectiveStatusType === 'idle' && (tracking.hasStartedRunning || timeSinceStart > 15000);
-      const isExpired = Date.now() - lastActivityTimestamp > 30 * 60 * 1000;
+      const isSessionCompleted = effectiveStatusType === 'idle' && (tracking.hasStartedRunning || timeSinceStart > IDLE_START_GRACE_MS);
+      const isExpired = Date.now() - lastActivityTimestamp > EXPIRY_MS;
+      const isFinal = isSessionCompleted || isExpired;
 
-      if (isSessionCompleted || isExpired) {
+      if (isFinal) {
         tracking.isComplete = true;
         clearInterval(tracking.timer);
         activeTails.delete(trackingMessageId);
-        
-        const finalMsg = await buildMessageWithHeaderAndFooter(sessionId, contentText, lastAssistant, lastActivityTimestamp, durationStr);
-        editMessageDirectly(finalMsg);
-        return;
       }
 
       const finalMsg = await buildMessageWithHeaderAndFooter(sessionId, contentText, lastAssistant, lastActivityTimestamp, durationStr);
-      scheduleEdit(finalMsg);
-    } catch(err) {
+      if (isFinal) editMessageDirectly(finalMsg);
+      else scheduleEdit(finalMsg);
+    } catch (err) {
       console.error('[Telegram] Tail polling interval error:', err);
     }
-  }, 2000);
+  }, POLL_INTERVAL_MS);
 }

@@ -5,6 +5,7 @@ import { exec } from "child_process";
 import { getTelegramStatus, updateCurrentSessionId, getArchivedSessions, archiveSession } from "../telegram";
 import { getStatusSignal } from "./signals";
 import { SessionItem } from "./SessionItem";
+import { DAY_MS, groupByParent, isListableSession, updatedAt } from "../sessions";
 
 let cachedSessions: any[] = [];
 let cachedDir = '';
@@ -75,75 +76,43 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
   }, 3000);
   onCleanup(() => clearInterval(interval));
   
+  // Pending question/permission take precedence over the session's run status.
+  const getApiStatusType = (sessionId: string): string => {
+    if ((api.state.session.question(sessionId) || []).length > 0) return "ask";
+    if ((api.state.session.permission(sessionId) || []).length > 0) return "perm";
+    const st: any = api.state.session.status(sessionId);
+    return typeof st === "string" ? st : (st?.type || "idle");
+  };
+
   const displaySessions = () => {
       let sessions = rawSessions() || [];
       const now = Date.now();
-      const EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours since last update = expired
-      const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
       
       const archivedIds = archived();
-      const isExpired = (s: any) => {
-         const updatedTime = typeof s.time?.updated === 'number' ? s.time.updated : 0;
-         return archivedIds.has(s.id) || now - updatedTime >= EXPIRY_MS;
-      };
+      // 24 hours since last update (or manually archived) = expired
+      const isExpired = (s: any) => archivedIds.has(s.id) || now - updatedAt(s) >= DAY_MS;
       
-      sessions = sessions.filter((s: any) => {
-         if (s.status === "deleted") return false;
-         if (!s.title || s.title.trim() === "") return false;
-         const updatedTime = typeof s.time?.updated === 'number' ? s.time.updated : 0;
-         return now - updatedTime < WEEK_MS;
-      });
+      sessions = sessions.filter((s: any) => isListableSession(s, now));
       
       sessions.sort((a: any, b: any) => (b.time?.updated || 0) - (a.time?.updated || 0));
       
-      const sessionsMap = new Map();
-      sessions.forEach((s: any) => {
-          s.subagents = [];
-          sessionsMap.set(s.id, s);
-      });
-
-      const findUltimateParent = (s: any) => {
-          let current = s;
-          let lastVisible = null;
-          const visited = new Set();
-          while (current.parentID && !visited.has(current.id)) {
-              visited.add(current.id);
-              const parent = sessionsMap.get(current.parentID);
-              if (!parent) break;
-              lastVisible = parent;
-              current = parent;
-          }
-          return lastVisible;
+      const parents = groupByParent(sessions);
+      
+      const isSessionActive = (session: any) => {
+        const [status] = getStatusSignal(session.id);
+        const st = status();
+        return st !== "idle" && st !== "done" && st !== "error";
+      };
+      // Evaluate every session (no short-circuit) so each status signal gets tracked
+      const hasActiveWork = (p: any) => {
+        const flags = [p, ...(p.subagents || [])].map(isSessionActive);
+        return flags.some(Boolean);
       };
 
-      const parents: any[] = [];
-      sessions.forEach((s: any) => {
-          const p = findUltimateParent(s);
-          if (p) {
-              p.subagents.push(s);
-          } else {
-              parents.push(s);
-          }
-      });
-      
       parents.sort((a: any, b: any) => {
-          let aActive = false;
-          let bActive = false;
-          
-          const checkActive = (session: any) => {
-              const [status] = getStatusSignal(session.id);
-              const st = status();
-              return st !== "idle" && st !== "done" && st !== "error";
-          };
-          
-          if (checkActive(a)) aActive = true;
-          a.subagents?.forEach((sub: any) => { if (checkActive(sub)) aActive = true; });
-          
-          if (checkActive(b)) bActive = true;
-          b.subagents?.forEach((sub: any) => { if (checkActive(sub)) bActive = true; });
-          
-          if (aActive && !bActive) return -1;
-          if (!aActive && bActive) return 1;
+          const aActive = hasActiveWork(a);
+          const bActive = hasActiveWork(b);
+          if (aActive !== bActive) return aActive ? -1 : 1;
           return (b.time?.updated || 0) - (a.time?.updated || 0);
       });
       
@@ -159,12 +128,7 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
           const visibleSubs = p.subagents.filter((sub: any) => {
               if (isExpanded) return true;
               const [status] = getStatusSignal(sub.id);
-              const questions = api.state.session.question(sub.id) || [];
-              const permissions = api.state.session.permission(sub.id) || [];
-              const st = api.state.session.status(sub.id);
-              const apiType = questions.length > 0 ? "ask" : permissions.length > 0 ? "perm" : (typeof st === "string" ? st : (st?.type || "idle"));
-              
-              return status() !== "idle" || apiType !== "idle";
+              return status() !== "idle" || getApiStatusType(sub.id) !== "idle";
           });
           
           visibleSubs.forEach((sub: any, index: number) => {
@@ -177,20 +141,7 @@ export function SessionSidebar(props: TuiSlotProps<"sidebar_content"> & { api: T
         const [status, setStatus] = getStatusSignal(s.id);
         if (status() !== "idle") return;
         
-        const questions = api.state.session.question(s.id) || [];
-        const permissions = api.state.session.permission(s.id) || [];
-        
-        let currentType = "idle";
-        if (questions.length > 0) {
-            currentType = "ask";
-        } else if (permissions.length > 0) {
-            currentType = "perm";
-        } else {
-            const st = api.state.session.status(s.id);
-            currentType = typeof st === "string" ? st : (st?.type || "idle");
-        }
-        
-        setStatus(currentType);
+        setStatus(getApiStatusType(s.id));
       });
       
       return list;

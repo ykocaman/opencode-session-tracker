@@ -18,6 +18,38 @@ import {
 import { getStatusSignal } from "./tui/signals";
 import { SessionSidebar } from "./tui/SessionSidebar";
 
+const SHELL_TOOLS = ['bash', 'run_command', 'execute_command'];
+const READ_TOOLS = ['read_file', 'view_file'];
+const WRITE_TOOLS = ['write_file', 'create_file', 'edit_file', 'replace_file_content', 'multi_replace_file_content'];
+const WEB_SEARCH_TOOLS = ['web_search', 'search_web'];
+
+const firstKey = (input: Record<string, unknown>, keys: string[]): string =>
+  String(keys.map(k => input[k]).find(Boolean) || '');
+
+/** One-line Telegram status for a tool call, e.g. "⚡ `$ npm test`". */
+function toolStatusLine(toolName: string, input: Record<string, unknown>): string {
+  if (SHELL_TOOLS.includes(toolName)) {
+    const cmd = firstKey(input, ['CommandLine', 'command', 'cmd']).split('\n')[0].slice(0, 120);
+    return `⚡ \`$ ${cmd}\``;
+  }
+  if (READ_TOOLS.includes(toolName)) {
+    return `📄 ${firstKey(input, ['path', 'file_path', 'AbsolutePath', 'filePath']).slice(0, 80) || toolName}`;
+  }
+  if (WRITE_TOOLS.includes(toolName)) {
+    return `✏️ ${firstKey(input, ['path', 'file_path', 'TargetFile', 'filePath']).slice(0, 80) || toolName}`;
+  }
+  if (WEB_SEARCH_TOOLS.includes(toolName)) {
+    return `🔍 ${firstKey(input, ['query', 'q']).slice(0, 80) || 'searching...'}`;
+  }
+  if (toolName === 'grep_search') {
+    return `🔍 grep: ${firstKey(input, ['Query', 'query', 'pattern']).slice(0, 80)}`;
+  }
+  if (toolName === 'list_dir') {
+    return `📁 ${firstKey(input, ['DirectoryPath', 'path', 'dir']).slice(0, 80) || toolName}`;
+  }
+  return `🔧 ${toolName}`;
+}
+
 const tui: TuiPlugin = async (api) => {
   logDebug('plugin loaded');
   try {
@@ -40,151 +72,108 @@ const tui: TuiPlugin = async (api) => {
     saveSessionStatus(sessionID, type);
   };
 
-  api.event.on("session.status", (e: any) => {
-    const payload = e.data || e.properties || e;
+  // Most events wrap their data in `data` or `properties`; unwrap once here.
+  const onEvent = (name: string, handler: (payload: any) => void) =>
+    api.event.on(name as any, (e: any) => handler(e.data || e.properties || e));
+
+  onEvent("session.status", (payload) => {
     const st = payload?.status;
     updateStatusSafe(payload?.sessionID, typeof st === "string" ? st : (st?.type || "idle"));
   });
   
-  api.event.on("session.idle", (e: any) => {
-    const payload = e.data || e.properties || e;
+  onEvent("session.idle", (payload) => {
     const sId = payload?.sessionID;
     updateStatusSafe(sId, "idle");
     if (sId) notifySessionIdle(sId);
   });
   
-  api.event.on("session.next.model.switched", (e: any) => {
-    const payload = e.data || e.properties || e;
+  onEvent("session.next.model.switched", (payload) => {
     const sId = payload?.sessionID;
     const model = payload?.model;
     if (sId && model?.id && model?.providerID) {
       saveSessionModel(sId, model.providerID, model.id);
     }
   });
-  
-  api.event.on("session.next.agent.switched", (e: any) => {
-    const payload = e.data || e.properties || e;
+
+  onEvent("session.next.agent.switched", (payload) => {
     const sId = payload?.sessionID;
     const agent = payload?.agent;
     if (sId && agent) {
       saveSessionAgent(sId, agent);
     }
   });
-  
+
   const sessionMeta = new Map<string, { agent?: string; model?: string; stepStartTime?: number; textBuf?: string }>();
 
-  api.event.on("session.next.step.started", (e: any) => {
-    const payload = e.data || e.properties || e;
+  const getMeta = (sId: string) => sessionMeta.get(sId) || {};
+  const resetTextBuf = (sId: string) => {
+    const meta = getMeta(sId);
+    meta.textBuf = '';
+    sessionMeta.set(sId, meta);
+  };
+
+  onEvent("session.next.step.started", (payload) => {
     const sId = payload?.sessionID;
     if (!sId) return;
     const agent = payload?.agent || '';
-    const model = (payload?.model as any)?.modelID || (payload?.model as any)?.id || '';
+    const model = payload?.model?.modelID || payload?.model?.id || '';
     sessionMeta.set(sId, { agent, model, stepStartTime: Date.now(), textBuf: '' });
   });
 
-  api.event.on("session.next.tool.input.started", (e: any) => {
-    const payload = e.data || e.properties || e;
+  onEvent("session.next.tool.input.started", (payload) => {
     const sId = payload?.sessionID;
     const name: string = payload?.name || '';
     if (!sId || !name) return;
     savePromptStatus(sId, `⚙️ ${name}...`);
   });
 
-  api.event.on("session.next.tool.called", (e: any) => {
-    const payload = e.data || e.properties || e;
+  onEvent("session.next.tool.called", (payload) => {
     const sId = payload?.sessionID;
     const toolName: string = payload?.tool || payload?.name || '';
-    const inputObj = (payload?.input || payload?.arguments || {}) as Record<string, unknown>;
+    const input = (payload?.input || payload?.arguments || {}) as Record<string, unknown>;
     if (!sId || !toolName) return;
 
-    let inputLabel = '';
-    if (toolName === 'bash' || toolName === 'run_command' || toolName === 'execute_command') {
-      inputLabel = String(inputObj.CommandLine || inputObj.command || inputObj.cmd || '').split('\n')[0].slice(0, 120);
-    } else if (toolName === 'read_file' || toolName === 'view_file') {
-      inputLabel = String(inputObj.path || inputObj.file_path || inputObj.AbsolutePath || inputObj.filePath || '').slice(0, 80);
-    } else if (toolName === 'write_file' || toolName === 'create_file' || toolName === 'edit_file'
-               || toolName === 'replace_file_content' || toolName === 'multi_replace_file_content') {
-      inputLabel = String(inputObj.path || inputObj.file_path || inputObj.TargetFile || inputObj.filePath || '').slice(0, 80);
-    } else if (toolName === 'web_search' || toolName === 'search_web') {
-      inputLabel = String(inputObj.query || inputObj.q || '').slice(0, 80);
-    } else if (toolName === 'grep_search') {
-      inputLabel = String(inputObj.Query || inputObj.query || inputObj.pattern || '').slice(0, 80);
-    } else if (toolName === 'list_dir') {
-      inputLabel = String(inputObj.DirectoryPath || inputObj.path || inputObj.dir || '').slice(0, 80);
-    }
-
-    let statusLine: string;
-    if (toolName === 'bash' || toolName === 'run_command' || toolName === 'execute_command') {
-      statusLine = `⚡ \`$ ${inputLabel}\``;
-    } else if (toolName === 'read_file' || toolName === 'view_file') {
-      statusLine = `📄 ${inputLabel || toolName}`;
-    } else if (toolName === 'write_file' || toolName === 'create_file' || toolName === 'edit_file'
-               || toolName === 'replace_file_content' || toolName === 'multi_replace_file_content') {
-      statusLine = `✏️ ${inputLabel || toolName}`;
-    } else if (toolName === 'web_search' || toolName === 'search_web') {
-      statusLine = `🔍 ${inputLabel || 'searching...'}`;
-    } else if (toolName === 'grep_search') {
-      statusLine = `🔍 grep: ${inputLabel}`;
-    } else if (toolName === 'list_dir') {
-      statusLine = `📁 ${inputLabel || toolName}`;
-    } else {
-      statusLine = `🔧 ${toolName}`;
-    }
-
-    const meta = sessionMeta.get(sId) || {};
-    meta.textBuf = '';
-    sessionMeta.set(sId, meta);
-    savePromptStatus(sId, statusLine);
+    resetTextBuf(sId);
+    savePromptStatus(sId, toolStatusLine(toolName, input));
   });
 
-  api.event.on("session.next.reasoning.started", (e: any) => {
-    const payload = e.data || e.properties || e;
+  onEvent("session.next.reasoning.started", (payload) => {
     const sId = payload?.sessionID;
     if (!sId) return;
-    const meta = sessionMeta.get(sId) || {};
-    meta.textBuf = '';
-    sessionMeta.set(sId, meta);
+    resetTextBuf(sId);
     savePromptStatus(sId, '🧠 Thinking...');
   });
 
-  api.event.on("session.next.reasoning.delta", (e: any) => {
-    const payload = e.data || e.properties || e;
+  onEvent("session.next.reasoning.delta", (payload) => {
     const sId = payload?.sessionID;
-    const delta: string = payload?.delta || '';
-    if (!sId || !delta) return;
+    if (!sId || !payload?.delta) return;
     savePromptStatus(sId, '🧠 Thinking...');
   });
 
-  api.event.on("session.next.text.started", (e: any) => {
-    const payload = e.data || e.properties || e;
+  onEvent("session.next.text.started", (payload) => {
     const sId = payload?.sessionID;
     if (!sId) return;
-    const meta = sessionMeta.get(sId) || {};
-    meta.textBuf = '';
-    sessionMeta.set(sId, meta);
+    resetTextBuf(sId);
     savePromptStatus(sId, '💬 Writing...');
   });
 
-  api.event.on("session.next.text.delta", (e: any) => {
-    const payload = e.data || e.properties || e;
+  onEvent("session.next.text.delta", (payload) => {
     const sId = payload?.sessionID;
     const delta: string = payload?.delta || '';
     if (!sId || !delta) return;
-    const meta = sessionMeta.get(sId) || {};
-    meta.textBuf = (meta.textBuf || '') + delta;
+    const meta = getMeta(sId);
+    const buf = (meta.textBuf || '') + delta;
+    meta.textBuf = buf;
     sessionMeta.set(sId, meta);
-    const buf = meta.textBuf;
-    const preview = buf.length > 600 ? '...' + buf.slice(-600) : buf;
-    savePromptStatus(sId, preview);
+    savePromptStatus(sId, buf.length > 600 ? '...' + buf.slice(-600) : buf);
   });
 
-  api.event.on("session.next.text.ended", (e: any) => {
-    const payload = e.data || e.properties || e;
+  onEvent("session.next.text.ended", (payload) => {
     const sId = payload?.sessionID;
     if (!sId) return;
-    const meta = sessionMeta.get(sId) || {};
+    const meta = getMeta(sId);
     const text = payload?.text || meta.textBuf || '';
-    if (!sId || !text) return;
+    if (!text) return;
 
     const sessionData = api.state.session.get(sId);
     const info: any = {};
@@ -197,8 +186,7 @@ const tui: TuiPlugin = async (api) => {
     savePromptStatus(sId, '✅ Done');
   });
 
-  api.event.on("session.next.step.ended", (e: any) => {
-    const payload = e.data || e.properties || e;
+  onEvent("session.next.step.ended", (payload) => {
     const sId = payload?.sessionID;
     if (!sId) return;
     const cost = payload?.cost || 0;
@@ -208,7 +196,7 @@ const tui: TuiPlugin = async (api) => {
       updatePromptResponseMeta(sId, cost > 0 ? cost : undefined, totalTokens > 0 ? totalTokens : undefined);
     }
   });
-  
+
   // Helper to handle both question.asked and question.v2.asked
   function handleQuestionAsked(e: any, isV2: boolean) {
     const props = e.properties || e.data || {};

@@ -23,11 +23,6 @@ export function setApiRef(api: any) {
   apiRef = api;
 }
 
-export let currentSessionId: string | null = null;
-export function setCurrentSessionIdVar(id: string | null) {
-  currentSessionId = id;
-}
-
 export let allowedUsers: number[] = [];
 export function setAllowedUsers(users: number[]) {
   allowedUsers = users;
