@@ -53,22 +53,14 @@ export function parseModelId(fullId: string): { providerID: string; modelID: str
 export async function recentModelRefs(limit = 30): Promise<ModelRef[]> {
   try {
     const dbPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
+    // Dedup in SQL: raw rows are MBs and blow up execFile's buffer.
     const { stdout } = await execFileAsync('sqlite3', ['-json', dbPath,
-      `SELECT data FROM session_message WHERE json_extract(data,'$.model.id') IS NOT NULL ORDER BY rowid DESC LIMIT 400`]);
+      `SELECT json_extract(data,'$.model.providerID') AS p, json_extract(data,'$.model.id') AS m, max(rowid) AS r ` +
+      `FROM session_message WHERE m IS NOT NULL GROUP BY p, m ORDER BY r DESC LIMIT ${limit}`]);
     const rows = JSON.parse(stdout || '[]');
-    const seen = new Set<string>();
     const out: ModelRef[] = [];
     for (const r of rows) {
-      let m: any = null;
-      try { m = JSON.parse(typeof r === 'string' ? r : r.data ?? r)?.model; } catch {}
-      const providerID = m?.providerID;
-      const modelID = m?.id;
-      if (!providerID || !modelID) continue;
-      const key = `${providerID}/${modelID}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push({ providerID, modelID });
-      if (out.length >= limit) break;
+      if (r?.p && r?.m) out.push({ providerID: r.p, modelID: r.m });
     }
     return out;
   } catch {
