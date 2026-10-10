@@ -4,7 +4,8 @@ import os from 'os';
 import { execFile } from 'child_process';
 import util from 'util';
 import { DAY_MS, groupByParent, isListableSession, updatedAt } from '../sessions';
-import { apiRef, readState, readActiveProjects, activeProjectDir, getArchivedSessions } from './state';
+import { apiRef, readState, readActiveProjects, activeProjectDir, getArchivedSessions, isHeartbeatFresh, readSavedStatuses, saveSessionStatus } from './state';
+import { localRunStatus, pendingForms, pendingPermissions, sessionDirOf, unwrapSessionList, workdir } from './ctx';
 
 const execFileAsync = util.promisify(execFile);
 
@@ -25,21 +26,31 @@ export function shortHash(text: string): string {
   return Math.abs(hash).toString(16);
 }
 
+const repairedStale = new Set<string>();
+
 export function getSessionStatus(sessionId: string): string {
   try {
-    const session = apiRef?.state?.session;
-    if (session?.question?.(sessionId)?.length > 0) return "ask";
-    if (session?.permission?.(sessionId)?.length > 0) return "perm";
-    const st = session?.status?.(sessionId);
-    if (st) {
-      const localStatus = typeof st === "string" ? st : (st.type || "idle");
-      if (localStatus !== "idle") return localStatus;
-    }
+    if (pendingForms(sessionId).length > 0) return "ask";
+    if (pendingPermissions(sessionId).length > 0) return "perm";
+    const st = localRunStatus(sessionId);
+    if (st && st !== "idle") return st === "running" ? "busy" : st;
   } catch (e) {}
 
   try {
-    const saved = readState().statuses?.[sessionId];
-    if (saved) return saved;
+    const saved = readSavedStatuses()[sessionId];
+    if (saved && saved.status && saved.status !== "idle" && !repairedStale.has(sessionId)) {
+      // Live store says idle but disk says active: trust live when the
+      // session is known locally, otherwise only while the owning
+      // instance's heartbeat is fresh — then repair the stale entry.
+      let known = false;
+      try { known = !!apiRef?.data?.session?.get?.(sessionId); } catch {}
+      if (known || (saved.dir && !isHeartbeatFresh(saved.dir))) {
+        repairedStale.add(sessionId);
+        try { saveSessionStatus(sessionId, "idle"); } catch {}
+        return "idle";
+      }
+    }
+    if (saved?.status) return saved.status;
   } catch (e) {}
 
   return "idle";
@@ -73,7 +84,7 @@ function discoverSiblingProjects(currentDir: string): string[] {
 
 export async function getProjectsKeyboard() {
   const dirs = new Set<string>();
-  const currentDir = apiRef?.state?.path?.directory;
+  const currentDir = workdir();
 
   if (currentDir) {
     dirs.add(currentDir);
@@ -85,11 +96,12 @@ export async function getProjectsKeyboard() {
   Object.keys(active).forEach(d => dirs.add(d));
 
   try {
-    const response = await apiRef.client.session.list({ query: { limit: 100 } });
-    const sessions = response.data || response || [];
-    if (Array.isArray(sessions)) {
-      sessions.forEach((s: any) => { if (s.directory) dirs.add(s.directory); });
-    }
+    const response = await apiRef.client.session.list({ limit: 100 });
+    const sessions = unwrapSessionList(response);
+    sessions.forEach((s: any) => {
+      const d = sessionDirOf(s);
+      if (d) dirs.add(d);
+    });
   } catch (e) {}
 
   const isOnline = (dir: string) => now - (active[dir]?.timestamp || 0) < ONLINE_WINDOW_MS;
@@ -140,7 +152,7 @@ async function fetchSessionsFromSqlite(queryDir: string): Promise<any[]> {
     const dbPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'opencode.db');
     if (!fs.existsSync(dbPath)) return [];
 
-    const query = `SELECT id, title, parent_id as parentID, time_updated as timeUpdated, time_archived as timeArchived FROM session WHERE directory = '${queryDir.replace(/'/g, "''")}' ORDER BY time_updated DESC LIMIT 50`;
+    const query = `SELECT id, title, parent_id as parentID, time_updated as timeUpdated, time_archived as timeArchived FROM session_v2 WHERE directory = '${queryDir.replace(/'/g, "''")}' ORDER BY time_updated DESC LIMIT 50`;
     const { stdout } = await execFileAsync('sqlite3', ['-json', dbPath, query]);
     if (!stdout.trim()) return [];
 
@@ -159,16 +171,15 @@ async function fetchSessionsFromSqlite(queryDir: string): Promise<any[]> {
 
 async function fetchSessionsFromApi(queryDir: string): Promise<any[]> {
   try {
-    const response = await apiRef.client.session.list({ query: { directory: queryDir, limit: 50 } });
-    const sessions = response.data || response || [];
-    return Array.isArray(sessions) ? sessions : [];
+    const response = await apiRef.client.session.list({ directory: queryDir, limit: 50 });
+    return unwrapSessionList(response);
   } catch (e) {
     return [];
   }
 }
 
 export async function getSessionsKeyboard(showHistory: boolean = false) {
-  const queryDir = activeProjectDir || apiRef.state.path.directory;
+  const queryDir = activeProjectDir || workdir();
 
   let sessions = await fetchSessionsFromSqlite(queryDir);
   if (sessions.length === 0) sessions = await fetchSessionsFromApi(queryDir);

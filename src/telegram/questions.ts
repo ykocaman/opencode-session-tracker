@@ -1,5 +1,19 @@
 import { bot, apiRef, allowedUsers } from './state';
-import { QuestionFlow, qfMap } from './stores';
+
+// v2 question flow: one Telegram prompt per form field. Answers are collected
+// by field key and submitted via session.form.reply once every field is
+// answered (or cancelled via session.form.cancel).
+export interface QuestionFlow {
+  requestId: string; // form id
+  sessionId: string;
+  questions: any[]; // adapted fields: { key, question, options?: [{ value, label }], userAnswer }
+  currentIndex: number;
+  messageId?: number;
+  chatId?: number;
+  title: string;
+}
+
+import { qfMap } from './stores';
 
 const questionCounter = (flow: QuestionFlow, index: number) =>
   flow.questions.length > 1 ? ` (${index}/${flow.questions.length})` : '';
@@ -16,9 +30,21 @@ function closeFlowMessage(flow: QuestionFlow, text: string, extra: object = {}) 
   }).catch(() => {});
 }
 
-export function notifyTelegramQuestion(requestId: string, sessionId: string, questions: any[], title: string, isV2 = false) {
-  const flow: QuestionFlow = { requestId, sessionId, questions, currentIndex: 0, title, isV2 };
-  qfMap.set(requestId, flow);
+function adaptField(f: any) {
+  const question = [f?.title, f?.description].filter(Boolean).join('\n') || 'Input required';
+  const options = Array.isArray(f?.options)
+    ? f.options.map((o: any) => typeof o === 'string'
+        ? { value: o, label: o }
+        : { value: o.value, label: o.label || o.value })
+    : undefined;
+  return { key: f?.key || `field_${Math.random().toString(36).slice(2, 8)}`, question, options, userAnswer: f?.default };
+}
+
+export function notifyTelegramQuestion(formId: string, sessionId: string, fields: any[], title: string) {
+  const questions = (Array.isArray(fields) ? fields : []).map(adaptField).filter(q => q.key);
+  if (questions.length === 0) return;
+  const flow: QuestionFlow = { requestId: formId, sessionId, questions, currentIndex: 0, title };
+  qfMap.set(formId, flow);
   sendQuestionMessage(flow);
 }
 
@@ -27,10 +53,10 @@ export function sendQuestionMessage(flow: QuestionFlow) {
   const inlineKeyboard: any[][] = [];
 
   if (Array.isArray(q.options)) {
-    q.options.forEach((opt: any, idx: number) => {
-      // QuestionOption = { label: string, description: string }
-      const label = typeof opt === 'string' ? opt : (opt.label || opt.text || String(idx + 1));
-      inlineKeyboard.push([{ text: label.slice(0, 64), callback_data: `q_ans_${label.slice(0, 30)}` }]);
+    q.options.forEach((opt: any) => {
+      const label = String(opt.label ?? opt.value ?? '');
+      const value = String(opt.value ?? opt.label ?? '');
+      if (label) inlineKeyboard.push([{ text: label.slice(0, 64), callback_data: `q_ans_${value.slice(0, 30)}` }]);
     });
   }
   inlineKeyboard.push([{ text: '❌ Skip/Cancel', callback_data: 'q_cancel' }]);
@@ -51,7 +77,7 @@ export function sendQuestionMessage(flow: QuestionFlow) {
   });
 }
 
-/** Record an answer for the current question; sends the next one or submits the flow. */
+/** Record an answer for the current field; sends the next one or submits the flow. */
 export function answerQuestionFlow(flow: QuestionFlow, answer: string) {
   flow.questions[flow.currentIndex].userAnswer = answer;
   flow.currentIndex++;
@@ -64,20 +90,42 @@ export function answerQuestionFlow(flow: QuestionFlow, answer: string) {
   }
 }
 
+/** Answer the flow's current field with free text (used by cross-instance sync). */
+export function answerFlowWithText(sessionId: string, formId: string, text: string): boolean {
+  const flow = qfMap.get(formId);
+  if (flow && flow.sessionId === sessionId) {
+    answerQuestionFlow(flow, text);
+    return true;
+  }
+  // No local flow (e.g. after restart): reply directly when the form has a single field.
+  try {
+    const forms = apiRef?.data?.session?.form?.list?.(sessionId) || [];
+    const form = forms.find((f: any) => f.id === formId);
+    const fields = form?.fields || [];
+    if (form && fields.length === 1 && fields[0]?.key) {
+      apiRef.client.session.form.reply({
+        sessionID: sessionId,
+        formID: formId,
+        answer: { [fields[0].key]: text },
+      }).catch(() => {});
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
 function submitQuestionFlow(flow: QuestionFlow) {
   try {
     const lastAnswer = flow.questions[flow.currentIndex - 1]?.userAnswer || '';
-    // QuestionAnswer = Array<string>, answers = Array<QuestionAnswer>
-    const replyArgs = {
-      requestID: flow.requestId,
-      answers: flow.questions.map((q: any) => [q.userAnswer || '']),
-    };
-    if (flow.isV2) {
-      // OpenCode >=1.18: use questionV2 API
-      (apiRef.client as any).questionV2?.reply(replyArgs).catch(() => {});
-    } else {
-      apiRef.client.question.reply(replyArgs).catch(() => {});
+    const answer: Record<string, any> = {};
+    for (const q of flow.questions) {
+      if (q.key) answer[q.key] = q.userAnswer ?? '';
     }
+    apiRef.client.session.form.reply({
+      sessionID: flow.sessionId,
+      formID: flow.requestId,
+      answer,
+    }).catch(() => {});
 
     const q = flow.questions[flow.questions.length - 1];
     closeFlowMessage(flow, `✅ ${flow.title}${questionCounter(flow, flow.questions.length)}\n\n${q.question}\n\nAnswered: ${lastAnswer}`);
@@ -87,9 +135,9 @@ function submitQuestionFlow(flow: QuestionFlow) {
 
 export function cancelQuestionFlow(flow: QuestionFlow) {
   try {
-    apiRef.client.question.reply({
-      requestID: flow.requestId,
-      answers: flow.questions.map(() => ['']),
+    apiRef.client.session.form.cancel({
+      sessionID: flow.sessionId,
+      formID: flow.requestId,
     }).catch(() => {});
 
     const q = flow.questions[flow.currentIndex];

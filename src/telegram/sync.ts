@@ -4,15 +4,17 @@ import {
   LOCK_FILE, INSTANCE_ID, readState, updateState, loadConfig, updateActiveProjects,
   triggerSessionsMenuUpdate,
 } from './state';
-import { startTelegramBot, stopTelegramBot } from './bot';
-import { closeFlowAnsweredInTerminal } from './questions';
+import { startTelegramBot, stopTelegramBot, notifyTelegram } from './bot';
+import { closeFlowAnsweredInTerminal, answerFlowWithText } from './questions';
 import { pendingQuestions, qfMap, updateCurrentSessionId, buildPromptOpts } from './stores';
+import { workdir, navigateHome, navigateSession, pendingForms, unwrapSessionId } from './ctx';
 
 const LOCK_TTL_MS = 15000;
 const LOCK_PID_CHECK_EVERY = 15; // ticks
 const QUESTION_CHECK_EVERY = 30; // ticks
 
 let lastSyncTimestamp = 0;
+let lastSyncErrorTimestamp = 0;
 let lastMenuUpdateTimestamp = 0;
 let syncLoopRunning = false;
 let lockCheckTick = 0;
@@ -32,38 +34,51 @@ function readLock(): any {
   try { return JSON.parse(fs.readFileSync(LOCK_FILE, 'utf8')); } catch (e) { return null; }
 }
 
+/** Records a cross-instance delivery failure so the leader can report it to Telegram. */
+function reportSyncError(action: string, err: any) {
+  try {
+    const detail = String(err?.message || err).slice(0, 300);
+    updateState('syncError', { action, detail, timestamp: Date.now() });
+  } catch (e) {}
+}
+
 /** Handles a command another instance (the Telegram leader) queued for this directory. */
 function handleSyncCommand(syncData: any) {
   const sId = syncData.sessionId;
-  const dir = apiRef.state.path.directory;
+  const dir = workdir();
 
   switch (syncData.type) {
     case 'navigate':
       updateCurrentSessionId(sId);
-      if (sId === null) apiRef.route.navigate('home');
-      else apiRef.route.navigate('session', { sessionID: sId });
+      if (sId === null) navigateHome();
+      else navigateSession(sId);
       break;
 
     case 'prompt':
       if (sId) {
-        const requestId = pendingQuestions.get(sId);
-        if (requestId) {
-          apiRef.client.question.reply({ requestID: requestId, answers: [[syncData.text]] }).catch(() => {});
+        const formId = pendingQuestions.get(sId);
+        if (formId && answerFlowWithText(sId, formId, syncData.text)) {
           pendingQuestions.delete(sId);
         } else {
           updateCurrentSessionId(sId);
-          apiRef.route.navigate('session', { sessionID: sId });
-          apiRef.client.session.prompt(buildPromptOpts(sId, syncData.text, syncData.model)).catch(() => {});
+          navigateSession(sId);
+          apiRef.client.session.prompt(buildPromptOpts(sId, syncData.text)).catch((e: any) => {
+            reportSyncError(`prompt "${syncData.text}"`, e);
+          });
         }
       } else {
-        apiRef.client.session.create({ directory: dir }).then((createRes: any) => {
-          const newSessionId = createRes.data?.id || createRes.id;
+        apiRef.client.session.create({ location: { directory: dir } }).then((createRes: any) => {
+          const newSessionId = unwrapSessionId(createRes);
           if (!newSessionId) return;
           updateCurrentSessionId(newSessionId);
-          apiRef.route.navigate('session', { sessionID: newSessionId });
+          navigateSession(newSessionId);
           updateState('createdSession', { sessionId: newSessionId, timestamp: Date.now() });
-          apiRef.client.session.prompt(buildPromptOpts(newSessionId, syncData.text, syncData.model)).catch(() => {});
-        }).catch(() => {});
+          apiRef.client.session.prompt(buildPromptOpts(newSessionId, syncData.text)).catch((e: any) => {
+            reportSyncError(`prompt "${syncData.text}"`, e);
+          });
+        }).catch((e: any) => {
+          reportSyncError('create session', e);
+        });
       }
       break;
 
@@ -72,13 +87,17 @@ function handleSyncCommand(syncData: any) {
         apiRef.client.session.switchModel({
           sessionID: sId,
           model: { id: syncData.modelID, providerID: syncData.providerID },
-        }).catch(() => {});
+        }).catch((e: any) => {
+          reportSyncError('model change', e);
+        });
       }
       break;
 
     case 'agent_change':
       if (sId) {
-        apiRef.client.session.switchAgent({ sessionID: sId, agent: syncData.agent }).catch(() => {});
+        apiRef.client.session.switchAgent({ sessionID: sId, agent: syncData.agent }).catch((e: any) => {
+          reportSyncError('agent change', e);
+        });
       }
       break;
   }
@@ -105,8 +124,8 @@ function closeExternallyAnsweredQuestions() {
   for (const [requestId, flow] of qfMap.entries()) {
     if (!flow.chatId || !flow.messageId) continue;
     try {
-      const pendingQs = apiRef?.state?.session?.question?.(flow.sessionId);
-      if (pendingQs && pendingQs.length > 0) continue;
+      const pending = pendingForms(flow.sessionId);
+      if (pending.some((f: any) => f.id === requestId)) continue;
 
       closeFlowAnsweredInTerminal(flow);
       qfMap.delete(requestId);
@@ -128,7 +147,16 @@ async function syncLoop() {
     const syncData = state.sync;
     if (syncData && syncData.timestamp > lastSyncTimestamp) {
       lastSyncTimestamp = syncData.timestamp;
-      if (syncData.targetDir === apiRef.state.path.directory) handleSyncCommand(syncData);
+      // consumedAt: a (re)starting instance must not replay an already-handled command.
+      if (!syncData.consumedAt && syncData.targetDir === workdir()) {
+        handleSyncCommand(syncData);
+        try {
+          const cur = readState();
+          if (cur.sync && cur.sync.timestamp === syncData.timestamp && !cur.sync.consumedAt) {
+            updateState('sync', { ...syncData, consumedAt: Date.now(), consumedBy: INSTANCE_ID });
+          }
+        } catch (e) {}
+      }
     }
 
     if (isLeader && state.menuUpdateTimestamp && state.menuUpdateTimestamp > lastMenuUpdateTimestamp) {
@@ -150,6 +178,13 @@ async function syncLoop() {
 
     if (isLeader && bot && ++questionFlowCheckTick % QUESTION_CHECK_EVERY === 0) {
       closeExternallyAnsweredQuestions();
+    }
+
+    const syncErr: any = state.syncError;
+    if (isLeader && bot && syncErr && syncErr.timestamp > lastSyncErrorTimestamp) {
+      lastSyncErrorTimestamp = syncErr.timestamp;
+      try { notifyTelegram(`❌ ${syncErr.action} failed: ${syncErr.detail || 'unknown error'}`); } catch (e) {}
+      try { updateState('syncError', null); } catch (e) {}
     }
   } catch (e) {
     console.error('[Telegram] syncLoop error:', e);

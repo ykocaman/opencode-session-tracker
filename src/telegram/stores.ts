@@ -1,14 +1,13 @@
 import { apiRef, activeProjectDir, readState, writeState, triggerSessionsMenuUpdate, selectedModel } from './state';
 
 export interface QuestionFlow {
-  requestId: string;
+  requestId: string; // v2 form id
   sessionId: string;
-  questions: any[];
+  questions: any[]; // adapted form fields (see questions.ts)
   currentIndex: number;
   messageId?: number;
   chatId?: number;
   title: string;
-  isV2?: boolean;
 }
 
 export interface PermissionRequest {
@@ -70,7 +69,11 @@ export function registerPermissionRequest(sessionId: string, permId: string): st
 
 /** Directory the Telegram user is currently operating on. */
 export function getTargetDir(): string {
-  return activeProjectDir || apiRef.state.path.directory;
+  try {
+    const dir = activeProjectDir || apiRef?.data?.location?.default?.()?.directory || apiRef?.state?.path?.directory;
+    if (dir) return dir;
+  } catch (e) {}
+  return activeProjectDir || '';
 }
 
 /** Active session id for a directory (defaults to the current target dir). */
@@ -89,17 +92,18 @@ export function getSelectedModelRef(): { providerID: string; modelID: string } |
   return selectedModel ? { providerID: selectedModel.providerID, modelID: selectedModel.modelID } : undefined;
 }
 
-export function buildPromptOpts(sessionId: string, text: string, model?: { providerID: string; modelID: string }) {
-  const opts: any = { sessionID: sessionId, parts: [{ type: 'text', text }] };
-  const m = model || getSelectedModelRef();
-  if (m) opts.model = m;
-  return opts;
+export function buildPromptOpts(sessionId: string, text: string) {
+  // v2 session.prompt takes flat { sessionID, text } — no parts[] or model override.
+  return { sessionID: sessionId, text };
 }
 
 /** Records the session currently shown in this instance's TUI. */
 export function updateCurrentSessionId(id: string | null) {
   if (id === null) return;
-  const dir = apiRef?.state?.path?.directory;
+  let dir = '';
+  try {
+    dir = apiRef?.data?.location?.default?.()?.directory || apiRef?.state?.path?.directory || '';
+  } catch (e) {}
   if (!dir) return;
   try {
     const state = readState();

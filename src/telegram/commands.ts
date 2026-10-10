@@ -9,6 +9,7 @@ import { getProjectsKeyboard, getSessionsKeyboard } from './keyboards';
 import { startTailTracking } from './tail';
 import { launchOpenCodeInstance, killOpenCodeInstance } from './launcher';
 import { getTargetDir, getActiveSessionId } from './stores';
+import { sessionDirectory, unwrapSession, unwrapSessionList } from './ctx';
 
 type MenuMessage = { chatId: number, messageId: number, timestamp: number } | null;
 
@@ -96,7 +97,7 @@ export async function handleTailCommand(chatId: number, sessionIdParam?: string 
   }
 
   try {
-    const sD = (await apiRef.client.session.get({ sessionID: sessionId }).catch(() => null))?.data || {};
+    const sD = unwrapSession(await apiRef.client.session.get({ sessionID: sessionId }).catch(() => null));
     const title = sD.title || sessionId.slice(0, 8);
 
     const trackingMsg = await bot?.sendMessage(chatId, `📋 <b>Tailing: ${escapeHtml(title)}</b>\n\n⌛ Fetching latest messages...`, {
@@ -123,15 +124,16 @@ export async function handleTailCommand(chatId: number, sessionIdParam?: string 
 export async function sendRecap(chatId: number, messageId: number | undefined, sessionId: string) {
   try {
     const [msgsRes, sRes] = await Promise.all([
-      apiRef.client.session.messages({ sessionID: sessionId, limit: 20 }),
+      apiRef.client.message.list({ sessionID: sessionId, limit: 20 }),
       apiRef.client.session.get({ sessionID: sessionId }).catch(() => null)
     ]);
-    const messages = msgsRes?.data || msgsRes || [];
-    const msgList = Array.isArray(messages) ? messages : [];
-    const sData = sRes?.data || sRes;
-    const dir = sData?.directory || apiRef.state.path.directory;
+    const msgList = unwrapSessionList(msgsRes);
+    const sData = unwrapSession(sRes);
+    const dir = sData?.location?.directory || sData?.directory || getTargetDir();
 
-    const assistants = [...msgList].reverse().filter((m: any) => (m.info || m).role === "assistant").slice(0, 2);
+    // v2 messages carry `type` ('user' | 'assistant' | ...); v1 used (info|m).role.
+    const roleOf = (m: any): string => m.type || (m.info || m).role;
+    const assistants = [...msgList].reverse().filter((m: any) => roleOf(m) === "assistant").slice(0, 2);
 
     if (assistants.length === 0) return;
 
@@ -139,7 +141,7 @@ export async function sendRecap(chatId: number, messageId: number | undefined, s
     const prevAssistant = assistants[1];
 
     const textOf = (msg: any) =>
-      (msg.parts || [])
+      (msg.content || msg.parts || [])
         .filter((p: any) => p.type === "text")
         .map((p: any) => p.text || "")
         .join("")
@@ -159,11 +161,11 @@ export async function sendRecap(chatId: number, messageId: number | undefined, s
     let promptTimestamp = Date.now();
     for (let i = msgList.length - 1; i >= 0; i--) {
       const m = msgList[i];
-      if ((m.info || m).role === 'assistant') {
+      if (roleOf(m) === 'assistant') {
         for (let j = i - 1; j >= 0; j--) {
           const pm = msgList[j];
-          if ((pm.info || pm).role === 'user') {
-            userText = (pm.content || '').trim() || textOf(pm);
+          if (roleOf(pm) === 'user') {
+            userText = String(pm.text || pm.content || '').trim() || textOf(pm);
             if (userText) {
               promptTimestamp = toMs(pm.time?.created || pm.timeCreated || pm.time?.updated || pm.timeUpdated) || promptTimestamp;
             }

@@ -110,7 +110,7 @@ defineToolStyle(['glob', 'glob_search'], '🔎', 'Glob');
 defineToolStyle([...QUESTION_TOOLS], '❓', 'Asked');
 defineToolStyle(['generate_image', 'image'], '🖼️', 'Image');
 
-const STATUS_ICONS: Record<string, string> = { running: '⏳', complete: '✅', error: '❌' };
+const STATUS_ICONS: Record<string, string> = { running: '⏳', streaming: '⏳', complete: '✅', completed: '✅', error: '❌' };
 
 export function formatToolLine(name: string, input: any, status: string | undefined): string {
   const label = getToolInputLabel(name, input);
@@ -131,7 +131,7 @@ export function formatToolLine(name: string, input: any, status: string | undefi
 export function buildStatusFromParts(parts: any[]): string {
   const lines: string[] = [];
 
-  for (const p of parts.filter(p => p.type !== 'text')) {
+  for (const p of (parts || []).filter(p => p.type !== 'text')) {
     if (p.type === 'reasoning') {
       const text = (p.text || '').trim();
       if (text) {
@@ -150,7 +150,7 @@ export function buildStatusFromParts(parts: any[]): string {
     }
   }
 
-  const textContent = parts.filter(p => p.type === 'text').map(p => p.text || '').join('').trim();
+  const textContent = (parts || []).filter(p => p.type === 'text').map(p => p.text || '').join('').trim();
   if (textContent) {
     const esc = escapeHtml(textContent);
     lines.push(esc.length > 3000
@@ -212,18 +212,19 @@ export async function buildMessageWithHeaderAndFooter(
 ): Promise<string> {
   let sessionTitle = '';
   try {
-    const sRes = await apiRef.client.session.get({ sessionID: sessionId });
-    sessionTitle = (sRes?.data || sRes)?.title || '';
+    const sRes: any = await apiRef.client.session.get({ sessionID: sessionId });
+    sessionTitle = (sRes && typeof sRes.id === 'string' ? sRes : sRes?.data)?.title || '';
   } catch (e) {}
   const header = sessionTitle ? `📌 <b>${escapeHtml(sessionTitle)}</b>\n\n` : '';
 
+  // v2 assistant messages carry agent/model/tokens/cost at top level (v1 nested under .info).
   const info = lastAssistant?.info || lastAssistant || {};
   const metaParts: string[] = [];
 
   const agentVal = info?.agent || readStateValue(s => s.sessionAgents?.[sessionId]);
   if (agentVal) metaParts.push(agentVal.split('-')[0].trim());
 
-  const modelVal = info?.model?.modelID || info?.modelID || readStateValue(s => s.sessionModels?.[sessionId]?.modelID);
+  const modelVal = info?.model?.modelID || info?.model?.id || info?.modelID || readStateValue(s => s.sessionModels?.[sessionId]?.modelID);
   if (modelVal) metaParts.push(formatModelName(modelVal));
 
   metaParts.push(durationOverride || formatDuration((Date.now() - promptTimestamp) / 1000));

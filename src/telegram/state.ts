@@ -117,7 +117,11 @@ function alive(pid: number): boolean {
 }
 
 export function updateActiveProjects() {
-  const dir = apiRef?.state?.path?.directory;
+  // v2: ctx.data.location.default().directory (see ./ctx workdir()); v1 fallback kept.
+  const dir = (() => {
+    try { return apiRef?.data?.location?.default?.()?.directory; } catch (e) {}
+    return apiRef?.state?.path?.directory;
+  })();
   if (!dir) return;
   const data = JSON.stringify({ dir, pid: process.pid, timestamp: Date.now() });
   const target = heartbeatPath(dir);
@@ -165,11 +169,43 @@ export function saveSessionStatus(sessionId: string, status: string) {
   try {
     const state = readState();
     const statuses = state.statuses || {};
-    statuses[sessionId] = status;
+    statuses[sessionId] = { status, dir: ownerDir(), timestamp: Date.now() };
     state.statuses = statuses;
     writeState(state);
     triggerSessionsMenuUpdate();
   } catch(e) {}
+}
+
+/** Owning instance workdir, captured synchronously at save time (v2 store, v1 fallback). */
+function ownerDir(): string {
+  try {
+    const dir = apiRef?.data?.location?.default?.()?.directory || apiRef?.state?.path?.directory;
+    if (dir) return dir;
+  } catch (e) {}
+  return '';
+}
+
+export interface SavedSessionStatus { status: string; dir?: string; timestamp?: number }
+
+/** statuses map normalized to objects; tolerates v1-era bare strings. */
+export function readSavedStatuses(): Record<string, SavedSessionStatus> {
+  const out: Record<string, SavedSessionStatus> = {};
+  try {
+    const statuses = readState().statuses || {};
+    for (const [id, v] of Object.entries<any>(statuses)) {
+      if (typeof v === 'string') out[id] = { status: v };
+      else if (v && typeof v.status === 'string') out[id] = { status: v.status, dir: v.dir, timestamp: v.timestamp };
+    }
+  } catch (e) {}
+  return out;
+}
+
+/** True when the instance owning `dir` wrote a fresh heartbeat (stale/dead-pid pruned). */
+export function isHeartbeatFresh(dir: string, maxAgeMs = 45000): boolean {
+  if (!dir) return false;
+  try {
+    return !!readActiveProjects(maxAgeMs)[dir];
+  } catch (e) { return false; }
 }
 
 export function saveSessionModel(sessionId: string, providerID: string, modelID: string) {

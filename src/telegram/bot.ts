@@ -16,6 +16,7 @@ import {
   pendingQuestions, getTargetDir, getActiveSessionId, setActiveSessionId,
   getSelectedModelRef, buildPromptOpts, updateCurrentSessionId,
 } from './stores';
+import { navigateSession, unwrapSessionId, workdir } from './ctx';
 
 export function stopTelegramBot() {
   if (bot) {
@@ -29,24 +30,49 @@ export function stopTelegramBot() {
   activeTails.clear();
 }
 
-export function notifyTelegram(message: string, inlineOptions?: { text: string, callback_data: string }[]) {
-  if (!isLeader || !bot || allowedUsers.length === 0) return;
-  const opts: any = {};
-  if (inlineOptions && inlineOptions.length > 0) {
-    opts.reply_markup = { inline_keyboard: [inlineOptions] };
+export async function notifyTelegram(message: string, inlineOptions?: { text: string, callback_data: string }[]) {
+  const record = (ok: boolean, reason?: string) => {
+    try { updateState('lastNotify', { ok, reason, timestamp: Date.now() }); } catch (e) {}
+  };
+  if (!isLeader || !bot || allowedUsers.length === 0) {
+    record(false, !isLeader ? 'not-leader' : (!bot ? 'no-bot' : 'no-users'));
+    return;
   }
-  allowedUsers.forEach(userId => {
-    bot?.sendMessage(userId, message, opts);
-  });
+  try {
+    const target = bot;
+    const opts: any = {};
+    if (inlineOptions && inlineOptions.length > 0) {
+      opts.reply_markup = { inline_keyboard: [inlineOptions] };
+    }
+    let ok = true;
+    let reason: string | undefined;
+    for (const userId of allowedUsers) {
+      try {
+        await target.sendMessage(userId, message, opts);
+      } catch (e: any) {
+        ok = false;
+        reason = String(e?.message || e).slice(0, 200);
+      }
+    }
+    record(ok, reason);
+  } catch (e: any) {
+    record(false, String(e?.message || e).slice(0, 200));
+  }
 }
 
 export function startTelegramBot() {
-  if (bot) return;
   const config = loadConfig();
   if (!config) {
     updateState('telegramStatus', 'missing');
     return;
   }
+
+  // Always refresh: after a hot-reload the module state resets while the
+  // bot instance survives on globalThis — without this, allowedUsers stays
+  // empty and every notify + incoming message is silently dropped.
+  setAllowedUsers(config.allowedUsers || []);
+
+  if (bot) return;
 
   cleanupStaleCacheFiles();
   updateState('telegramStatus', 'ok');
@@ -141,8 +167,8 @@ async function handleRecapCommand(chatId: number) {
 
 /** Sends the prompt to the session, either locally or via the sync channel to the owning instance. */
 function dispatchPrompt(sessionId: string, targetDir: string, text: string) {
-  if (targetDir === apiRef.state.path.directory) {
-    apiRef.route.navigate("session", { sessionID: sessionId });
+  if (targetDir === workdir()) {
+    navigateSession(sessionId);
     apiRef.client.session.prompt(buildPromptOpts(sessionId, text)).catch(() => {});
   } else {
     updateState('sync', {
@@ -209,14 +235,19 @@ async function handleIncomingText(
 
   if (currentActive) {
     registerMessageSession(tailMsgId, currentActive, targetDir);
-    dispatchPrompt(currentActive, targetDir, text);
+    try {
+      dispatchPrompt(currentActive, targetDir, text);
+    } catch (e: any) {
+      bot?.sendMessage(chatId, `❌ Failed to send prompt: ${escapeHtml(e?.message || e)}`).catch(() => {});
+      return;
+    }
     startTailTracking(currentActive, chatId, tailMsgId, targetDir);
     return;
   }
 
   try {
-    const createRes: any = await apiRef.client.session.create({ directory: targetDir });
-    const newSessionId = createRes.data?.id || createRes.id;
+    const createRes: any = await apiRef.client.session.create({ location: { directory: targetDir } });
+    const newSessionId = unwrapSessionId(createRes);
     if (!newSessionId) return;
 
     updateCurrentSessionId(newSessionId);

@@ -1,6 +1,14 @@
 import os from 'os';
 import { apiRef, activeProjectDir } from './state';
 
+function currentDir(): string {
+  try {
+    return activeProjectDir || apiRef?.data?.location?.default?.()?.directory || apiRef?.state?.path?.directory || '';
+  } catch (e) {
+    return activeProjectDir || '';
+  }
+}
+
 const TIME_ONLY_RE = /^\d{1,2}:\d{2}\s*(?:AM|PM)?$/i;
 const DCP_PREFIX = '✂️ <b>DCP</b>:';
 const SYSTEM_PREFIX = '🔔 <b>System</b>:';
@@ -8,7 +16,7 @@ const SYSTEM_PREFIX = '🔔 <b>System</b>:';
 export function cleanPath(p: string): string {
   if (!p) return '';
   let cleaned = p;
-  const projectDir = activeProjectDir || apiRef.state.path.directory || '';
+  const projectDir = currentDir();
   if (projectDir && p.startsWith(projectDir)) {
     let relative = p.slice(projectDir.length);
     if (relative.startsWith('/') || relative.startsWith('\\')) {

@@ -14,6 +14,7 @@ import { launchOpenCodeInstance, killOpenCodeInstance } from './launcher';
 import { getModelsKeyboard, parseModelId } from './models';
 import { sendQuestionMessage, answerQuestionFlow, cancelQuestionFlow, findFlow } from './questions';
 import { permissionRequests, getTargetDir, getActiveSessionId } from './stores';
+import { pendingPermissions } from './ctx';
 
 type Query = TelegramBot.CallbackQuery & { message: TelegramBot.Message; data: string };
 type Handler = (bot: TelegramBot, query: Query) => Promise<void> | void;
@@ -212,8 +213,11 @@ const onShowQuestion = withActiveSession((bot, query, sessionId) => {
   answer(bot, query, 'Resending permission request...');
   let desc = 'Session needs permission to execute a tool.';
   try {
-    const p = apiRef?.state?.session?.permission?.(sessionId);
-    if (p && p.length > 0) desc = p[0].description || desc;
+    const p = pendingPermissions(sessionId);
+    if (p && p.length > 0) {
+      const first = p[0];
+      desc = first.message || (first.action ? `${first.action}: ${(first.resources || []).join(', ')}` : desc);
+    }
   } catch (e) {}
 
   const shortId = perm[0];
@@ -263,7 +267,11 @@ const onPermission: Handler = async (bot, query) => {
   }
 
   try {
-    await apiRef.client.permission.reply({ requestID: req.permId, reply: isAllow ? 'once' : 'reject' });
+    await apiRef.client.permission.reply({
+      sessionID: req.sessionId,
+      requestID: req.permId,
+      decision: isAllow ? 'once' : 'reject',
+    });
     answer(bot, query, isAllow ? '✅' : '❌');
     permissionRequests.delete(shortId);
 

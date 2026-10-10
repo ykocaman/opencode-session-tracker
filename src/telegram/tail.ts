@@ -1,6 +1,7 @@
 import fs from 'fs';
 import { bot, apiRef, getPromptStatusPath } from './state';
 import { buildMessageWithHeaderAndFooter, buildStatusFromParts, escapeHtml, formatDuration, toMs } from './formatters';
+import { localRunStatus, unwrapSessionList } from './ctx';
 
 export interface TailTracking {
   sessionId: string;
@@ -22,7 +23,7 @@ const MAX_MESSAGE_LEN = 4000;
 const IDLE_START_GRACE_MS = 15000;
 const EXPIRY_MS = 30 * 60 * 1000;
 
-const roleOf = (m: any): string => (m.info || m).role;
+const roleOf = (m: any): string => m.type || (m.info || m).role;
 
 /** Text of the last prompt status file written by the plugin, if any. */
 function readLiveStatus(sessionId: string): string {
@@ -42,8 +43,8 @@ function computeAssistantDuration(msgs: any[], lastAssistant: any): string {
   const lastUserMsg = assistantIndex > 0 ? msgs[assistantIndex - 1] : null;
   if (!lastUserMsg) return '';
 
-  const startMs = toMs(lastUserMsg.time?.created || lastUserMsg.timeCreated || lastUserMsg.time?.updated || lastUserMsg.timeUpdated);
-  const endMs = toMs(lastAssistant.time?.updated || lastAssistant.timeUpdated || lastAssistant.time?.created || lastAssistant.timeCreated);
+  const startMs = toMs(lastUserMsg.time?.created || lastUserMsg.timeCreated);
+  const endMs = toMs(lastAssistant.time?.completed || lastAssistant.time?.updated || lastAssistant.timeUpdated || lastAssistant.time?.created || lastAssistant.timeCreated);
   return startMs && endMs && endMs >= startMs ? formatDuration((endMs - startMs) / 1000) : '';
 }
 
@@ -58,12 +59,12 @@ export async function getSessionActiveContent(
   lastMsgIsAssistant: boolean;
   calculatedDurationStr?: string;
 }> {
-  const msgsRes = await apiRef.client.session.messages({ sessionID: sessionId, limit: 10 }).catch(() => null);
-  const msgs = (msgsRes?.data || msgsRes || []) as any[];
+  const msgsRes = await apiRef.client.message.list({ sessionID: sessionId, limit: 10 }).catch(() => null);
+  const msgs = unwrapSessionList(msgsRes);
 
-  const statusRes = await apiRef.client.session.status({ directory }).catch(() => null);
-  const statuses = statusRes?.data || statusRes || {};
-  const statusType = statuses[sessionId]?.type || 'idle';
+  // v2 has no session.status client method — the local store tracks run state.
+  const rawStatus = localRunStatus(sessionId);
+  const statusType = rawStatus === 'running' ? 'busy' : rawStatus;
 
   let lastAssistant: any = null;
   let historyMsgs = msgs;
@@ -83,7 +84,7 @@ export async function getSessionActiveContent(
 
   const fallbackText = statusType === 'idle' ? '✅ Done' : '⏳ Processing...';
   const activeText = readLiveStatus(sessionId)
-    || (lastAssistant ? buildStatusFromParts(lastAssistant.parts || []) : fallbackText);
+    || (lastAssistant ? buildStatusFromParts(lastAssistant.content || lastAssistant.parts || []) : fallbackText);
 
   return { activeText, lastAssistant, statusType, historyMsgs, lastMsgIsAssistant, calculatedDurationStr };
 }
@@ -96,17 +97,20 @@ export function notifySessionIdle(sessionId: string) {
 async function resolveEffectiveStatus(sessionId: string, directory: string, statusType: string): Promise<string> {
   if (statusType !== 'idle') return statusType;
   try {
-    const listRes = await (apiRef.client.session as any).list({ query: { directory, limit: 50 } }).catch(() => null);
-    const sessions = listRes?.data || listRes || [];
+    const listRes = await apiRef.client.session.list({ directory, limit: 50 }).catch(() => null);
+    const sessions = unwrapSessionList(listRes);
     if (!Array.isArray(sessions)) return statusType;
 
-    const children = sessions.filter((s: any) => s.parentID === sessionId && s.status !== 'deleted');
+    const children = sessions.filter((s: any) => s.parentID === sessionId && s.status !== 'deleted' && !s.time?.archived);
     if (children.length === 0) return statusType;
 
-    const childStatuses = (await apiRef.client.session.status({ directory }).catch(() => null))?.data || {};
     const hasActiveChild = children.some((s: any) => {
-      const st = childStatuses[s.id]?.type || s.status || 'idle';
-      return st !== 'idle' && st !== 'deleted' && st !== 'error';
+      try {
+        const st = localRunStatus(s.id);
+        return st !== 'idle';
+      } catch (e) {
+        return false;
+      }
     });
     if (hasActiveChild) return 'running';
   } catch (e) { /* child check best-effort */ }
@@ -116,17 +120,17 @@ async function resolveEffectiveStatus(sessionId: string, directory: string, stat
 function renderHistoryMessage(m: any): { role: string; text: string } {
   const role = roleOf(m);
   if (role === 'assistant') {
-    return { role, text: buildStatusFromParts(m.parts || []) };
+    return { role, text: buildStatusFromParts(m.content || m.parts || []) };
   }
-  const rawText = (m.parts || [])
+  // v2 user messages carry `text` directly; fall back to v1 parts parsing.
+  const rawText = String(m.text || (m.content ?? '') || (m.parts || [])
     .map((p: any) => {
       if (p.type === 'text') return p.text || '';
       if (p.type === 'tool_result') return p.content || '';
       return '';
     })
     .filter(Boolean)
-    .join('\n')
-    .trim();
+    .join('\n')).trim();
   return { role, text: escapeHtml(rawText.length > 300 ? rawText.slice(0, 300) + '...' : rawText) };
 }
 

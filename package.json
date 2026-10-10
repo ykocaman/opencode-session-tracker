@@ -29,14 +29,14 @@
     "url": "git+https://github.com/ykocaman/opencode-session-tracker.git"
   },
   "engines": {
-    "opencode": ">=1.4.3"
+    "opencode": ">=2.0.0"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "^1.18.0",
-    "@opentui/core": "^0.4.3",
-    "@opentui/solid": "^0.4.3",
+    "@opencode/plugin": "2.0.25",
+    "@opentui/core": "^0.5.17",
+    "@opentui/solid": "^0.5.17",
     "node-telegram-bot-api": "^0.66.0",
-    "solid-js": "^1.9.14"
+    "solid-js": "1.9.12"
   },
   "devDependencies": {
     "@types/node-telegram-bot-api": "^0.64.15",

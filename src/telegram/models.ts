@@ -31,21 +31,23 @@ export async function getModelsKeyboard() {
   const kb: any[][] = [];
   try {
     const modelsRes = await apiRef.client.model.list({});
-    let models = modelsRes.data || modelsRes || [];
+    let models = modelsRes?.data || modelsRes || [];
     if (!Array.isArray(models)) models = [];
 
+    const modelIdOf = (m: any) => m.modelID || m.id || '';
     models.sort((a: any, b: any) => {
-      const priA = getModelPriority(a.providerID, a.id);
-      const priB = getModelPriority(b.providerID, b.id);
-      return priA !== priB ? priB - priA : a.id.localeCompare(b.id);
+      const priA = getModelPriority(a.providerID, modelIdOf(a));
+      const priB = getModelPriority(b.providerID, modelIdOf(b));
+      return priA !== priB ? priB - priA : modelIdOf(a).localeCompare(modelIdOf(b));
     });
 
     const currentActive = getActiveSessionId(getTargetDir());
     const current = currentActive ? readState().sessionModels?.[currentActive] : null;
 
     models.slice(0, 10).forEach((m: any) => {
-      const isSelected = !!current && m.id === current.modelID && m.providerID === current.providerID;
-      const cleanId = `${m.providerID}/${m.id}`;
+      const mid = modelIdOf(m);
+      const isSelected = !!current && mid === current.modelID && m.providerID === current.providerID;
+      const cleanId = `${m.providerID}/${mid}`;
       const shortId = shortHash(cleanId);
       modelIds.set(shortId, cleanId);
       kb.push([{ text: `${isSelected ? '→ ' : ''}${modelName(m)}`, callback_data: `model_select_${shortId}` }]);

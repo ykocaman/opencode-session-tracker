@@ -1,7 +1,9 @@
 /** @jsxImportSource @opentui/solid */
 import { Show } from "solid-js";
-import type { TuiPluginApi } from "@opencode-ai/plugin/tui";
+import type { Plugin } from "@opencode/plugin/tui";
 import { getStatusSignal } from "./signals";
+
+type TuiContext = Plugin.Context;
 
 export interface SessionItemProps {
   id: string;
@@ -15,7 +17,7 @@ export interface SessionItemProps {
   expanded: () => Set<string>;
   toggleExpanded: (id: string) => void;
   onArchive?: (id: string) => void;
-  api: TuiPluginApi;
+  ctx: TuiContext;
 }
 
 const MOUSE_BUTTON_RIGHT = 2;
@@ -45,7 +47,9 @@ export function SessionItem(props: SessionItemProps) {
   
   const nav = () => {
     props.setCurrentSessionId(props.id);
-    props.api.route.navigate("session", { sessionID: props.id });
+    try {
+      props.ctx.ui.router.navigate({ type: "session", sessionID: props.id });
+    } catch (e) {}
   };
 
   const handleTitleMouseDown = (event: any) => {
