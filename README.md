@@ -72,10 +72,12 @@ Live prompt tracking — follow your agent's thinking and tool calls in real-tim
 
 ## 📥 Installation
 
-Install globally using the official OpenCode plugin command (requires OpenCode `>=1.4.3`):
+> **OpenCode v2 supported.** Version 2.4.0 and newer require **OpenCode `>=2.0.0`** (tested on 2.0.25). If you are still on OpenCode v1, use version 2.3.x of this plugin instead.
+
+Install using the official OpenCode plugin command:
 
 ```bash
-opencode plugin opencode-session-tracker --global
+opencode plugin add opencode-session-tracker
 ```
 
 Restart OpenCode, and the sidebar will load automatically. Telegram control activates on top of it as soon as you add a `telegram.json` config — see the [setup guide](docs/telegram-setup.md).
@@ -96,4 +98,9 @@ If you want to customize or develop the plugin locally:
    ```bash
    npm run build
    ```
-3. Load the plugin locally in OpenCode by adding the absolute path of this folder to your `tui.json` configuration file.
+3. Load the plugin locally in OpenCode by adding the absolute path of this folder to the `plugins` array in your `~/.config/opencode/cli.json` file:
+   ```json
+   {
+     "plugins": ["/absolute/path/to/opencode-session-tracker"]
+   }
+   ```
