@@ -13,7 +13,7 @@ import { getProjectsKeyboard, getSessionsKeyboard, projectIds, modelIds } from '
 import { activeTails } from './tail';
 import { handleSessionsCommand, handleHistoryCommand, handleTailCommand, sendRecap } from './commands';
 import { launchOpenCodeInstance, killOpenCodeInstance } from './launcher';
-import { getModelsKeyboard, parseModelId } from './models';
+import { getModelsKeyboard } from './models';
 import { sendQuestionMessage, answerQuestionFlow, cancelQuestionFlow, findFlow } from './forms';
 import { permissionRequests, getTargetDir, getActiveSessionId, setActiveSessionId } from '../core/context';
 import { enqueue } from '../core/queue';
@@ -303,10 +303,25 @@ const onQuestionAnswer: Handler = (bot, query) => {
 };
 
 const onModelSelect: Handler = async (bot, query) => {
-  const fullId = modelIds.get(query.data.replace('model_select_', ''));
-  if (!fullId) return;
+  const hash = query.data.replace('model_select_', '');
+  const ref = modelIds.get(hash);
+  if (!ref) {
+    // Stale menu: hashes live in memory and are lost on restart. Self-heal
+    // with a fresh list instead of guessing the provider (the old code
+    // re-parsed the id string and defaulted to openrouter — that switched
+    // sessions to a non-existent model).
+    answer(bot, query, 'Menu outdated, fresh list sent.');
+    try {
+      const kb = await getModelsKeyboard();
+      await bot?.sendMessage(query.message.chat.id, '🤖 <b>Models</b>', {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: kb },
+      });
+    } catch {}
+    return;
+  }
 
-  const { providerID, modelID } = parseModelId(fullId);
+  const { providerID, modelID } = ref;
   const targetDir = getTargetDir();
   const currentActive = getActiveSessionId(targetDir);
 

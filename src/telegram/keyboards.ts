@@ -14,7 +14,7 @@ import { localRunStatus, pendingForms, pendingPermissions, sessionDirOf, unwrapS
 const execFileAsync = util.promisify(execFile);
 
 export const projectIds = new Map<string, string>();
-export const modelIds = new Map<string, string>();
+export const modelIds = new Map<string, { providerID: string; modelID: string }>();
 
 const ONLINE_WINDOW_MS = 8000;
 const ACTIVE_PROJECTS_WINDOW_MS = 45000;

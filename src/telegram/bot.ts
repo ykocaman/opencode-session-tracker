@@ -158,7 +158,7 @@ async function handleCommand(chatId: number, text: string) {
     case '/start': return handleStart(chatId);
     case '/projects': return handleProjectsCommand(chatId);
     case '/sessions': return handleSessionsCommand(chatId);
-    case '/models': return handleModelsCommand(chatId);
+    case '/models': return handleModelsCommand(chatId, arg || undefined);
     case '/recap': return handleRecapCommand(chatId);
     case '/history': return handleHistoryCommand(chatId);
     case '/tail': return handleTailCommand(chatId, arg ?? null);
