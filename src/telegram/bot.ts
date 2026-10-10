@@ -12,7 +12,7 @@ import {
 } from '../core/runtime';
 import { storeSet, storeGet, setTelegramStatus, cleanupStaleCacheFiles } from '../core/store';
 import { registerMessageSession, escapeHtml } from './formatters';
-import { startTailTracking, activeTails } from './tail';
+import { startTailTracking, activeTails, closeTailsForSession } from './tail';
 import {
   handleStart, handleProjectsCommand, handleSessionsCommand, handleHistoryCommand,
   handleTailCommand, sendRecap, handleHelpCommand, handleRestartCommand,
@@ -192,13 +192,7 @@ async function dispatchPrompt(sessionId: string, targetDir: string, text: string
 
 /** Stops live tails of a session so a fresh reply-mode stream can start. */
 function closeActiveTails(sessionId: string) {
-  for (const [msgId, tail] of activeTails.entries()) {
-    if (tail.sessionId !== sessionId || tail.isComplete) continue;
-    tail.isComplete = true;
-    if (tail.timer) clearInterval(tail.timer);
-    activeTails.delete(msgId);
-    bot?.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: tail.chatId, message_id: msgId }).catch(() => {});
-  }
+  closeTailsForSession(sessionId);
 }
 
 async function handleIncomingText(

@@ -138,12 +138,26 @@ function renderHistoryMessage(m: any): { role: string; text: string } {
 
 const ROLE_ICONS: Record<string, string> = { user: '👤', assistant: '🤖' };
 
+/** Retire live tails of a session (their messages keep last content, buttons cleared). */
+export function closeTailsForSession(sessionId: string) {
+  for (const [msgId, tail] of activeTails.entries()) {
+    if (tail.sessionId !== sessionId || tail.isComplete) continue;
+    tail.isComplete = true;
+    if (tail.timer) clearInterval(tail.timer);
+    activeTails.delete(msgId);
+    bot?.editMessageReplyMarkup({ inline_keyboard: [] }, { chat_id: tail.chatId, message_id: msgId }).catch(() => {});
+  }
+}
+
 export function startTailTracking(
   sessionId: string,
   chatId: number,
   trackingMessageId: number,
   directory: string
 ) {
+  // One live tail per session: a second /tail (or Tail button) must not leave
+  // the previous one editing its own message with phase-shifted content.
+  closeTailsForSession(sessionId);
   const tracking: TailTracking = {
     sessionId,
     chatId,
