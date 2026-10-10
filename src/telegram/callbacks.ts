@@ -2,19 +2,22 @@ import TelegramBot from 'node-telegram-bot-api';
 import path from 'path';
 import {
   apiRef, setActiveProjectDir,
-  readState, writeState, readActiveProjects, saveSessionModel,
   lastSessionsMessage, setLastSessionsMessage, lastProjectsMessage, lastHistoryMessage, setLastHistoryMessage,
-  setProjectStatusOverride, clearProjectStatusOverride,
-} from './state';
+} from '../core/runtime';
+import { readState } from '../core/store';
+import { readActiveProjects } from '../core/leader';
+import { saveSessionModel } from '../core/status';
+import { setProjectStatusOverride, clearProjectStatusOverride } from '../core/store';
 import { escapeHtml } from './formatters';
 import { getProjectsKeyboard, getSessionsKeyboard, projectIds, modelIds } from './keyboards';
 import { activeTails } from './tail';
 import { handleSessionsCommand, handleHistoryCommand, handleTailCommand, sendRecap } from './commands';
 import { launchOpenCodeInstance, killOpenCodeInstance } from './launcher';
 import { getModelsKeyboard, parseModelId } from './models';
-import { sendQuestionMessage, answerQuestionFlow, cancelQuestionFlow, findFlow } from './questions';
-import { permissionRequests, getTargetDir, getActiveSessionId } from './stores';
-import { pendingPermissions } from './ctx';
+import { sendQuestionMessage, answerQuestionFlow, cancelQuestionFlow, findFlow } from './forms';
+import { permissionRequests, getTargetDir, getActiveSessionId, setActiveSessionId } from '../core/context';
+import { enqueue } from '../core/queue';
+import { pendingPermissions } from '../core/ctx';
 
 type Query = TelegramBot.CallbackQuery & { message: TelegramBot.Message; data: string };
 type Handler = (bot: TelegramBot, query: Query) => Promise<void> | void;
@@ -61,11 +64,8 @@ const onNavigate: Handler = async (bot, query) => {
   const sId = targetId === 'home' ? null : targetId;
   const targetDir = getTargetDir();
   try {
-    const state = readState();
-    state.sync = { type: 'navigate', targetDir, sessionId: sId, timestamp: Date.now() };
-    state.activeSessions = state.activeSessions || {};
-    state.activeSessions[targetDir] = sId;
-    writeState(state);
+    enqueue({ type: 'navigate', targetDir, sessionId: sId });
+    setActiveSessionId(targetDir, sId);
 
     answer(bot, query, 'Session switched.');
 
@@ -120,11 +120,6 @@ const onProjectLaunch: Handler = (bot, query) => {
       attempts++;
       if (readActiveProjects(8000)[currentSelected]) {
         clearInterval(pollTimer);
-        const st = readState();
-        if (st.sync?.targetDir === currentSelected) {
-          st.sync = undefined;
-          writeState(st);
-        }
         refreshProjectsKeyboard(bot, chatId, messageId);
       } else if (attempts > 30) {
         clearInterval(pollTimer);
@@ -313,13 +308,11 @@ const onModelSelect: Handler = async (bot, query) => {
 
   const { providerID, modelID } = parseModelId(fullId);
   const targetDir = getTargetDir();
-  const state = readState();
-  const currentActive = state.activeSessions?.[targetDir] || null;
+  const currentActive = getActiveSessionId(targetDir);
 
   if (currentActive) {
     try {
-      state.sync = { type: 'model_change', targetDir, sessionId: currentActive, providerID, modelID, timestamp: Date.now() };
-      writeState(state);
+      enqueue({ type: 'model_change', targetDir, sessionId: currentActive, providerID, modelID });
       saveSessionModel(currentActive, providerID, modelID);
     } catch (e) {}
   }

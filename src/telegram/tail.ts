@@ -1,7 +1,8 @@
 import fs from 'fs';
-import { bot, apiRef, getPromptStatusPath } from './state';
+import { bot, apiRef } from '../core/runtime';
+import { getPromptStatusPath } from '../core/status';
 import { buildMessageWithHeaderAndFooter, buildStatusFromParts, escapeHtml, formatDuration, toMs } from './formatters';
-import { localRunStatus, unwrapSessionList } from './ctx';
+import { localRunStatus, unwrapSessionList } from '../core/ctx';
 
 export interface TailTracking {
   sessionId: string;

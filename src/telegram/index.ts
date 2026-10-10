@@ -1,7 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { readState } from './state';
+import { storeGet } from '../core/store';
 
 export {
   saveSessionStatus,
@@ -11,24 +11,23 @@ export {
   savePromptResponse,
   updatePromptResponseMeta,
   getPromptStatusPath,
-  triggerSessionsMenuUpdate,
   getArchivedSessions,
   archiveSession,
-  logDebug,
-} from './state';
+} from '../core/status';
+export { triggerSessionsMenuUpdate } from '../core/store';
+export { logDebug } from '../core/runtime';
 
-export { notifySessionIdle } from './tail';
 export { notifyTelegram } from './bot';
-export { initTelegram } from './sync';
-export { updateCurrentSessionId, registerQuestionRequest, registerPermissionRequest } from './stores';
-export { notifyTelegramQuestion } from './questions';
+export { initTelegram } from './loop';
+export { updateCurrentSessionId, registerQuestionRequest, registerPermissionRequest } from '../core/context';
+export { notifyTelegramQuestion } from './forms';
 
 export const getTelegramStatus = () => {
   try {
     const configPath = path.join(os.homedir(), '.config', 'opencode', 'telegram.json');
     if (!fs.existsSync(configPath)) return 'missing';
-    return readState().telegramStatus || 'ok';
-  } catch (e) {
+    return storeGet<string>('telegramStatus', 'ok') || 'ok';
+  } catch {
     return 'failed';
   }
 };

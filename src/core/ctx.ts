@@ -1,30 +1,21 @@
-// OpenCode v2 accessors shared by the Telegram integration.
-//
-// The plugin context (`ctx`) is stored as `apiRef` (see state.ts) so existing
-// call sites keep working. These helpers translate the v1 access patterns
-// (`api.state.path.directory`, `api.state.session.*`, `api.route.*`) to their
-// v2 equivalents (`ctx.data.*`, `ctx.ui.router.*`), with best-effort
-// fallbacks so nothing throws when the local store has no data.
-import { apiRef } from './state';
+// OpenCode v2 accessors. Pure v2 (no v1 fallbacks — the rewrite rule);
+// every helper never throws.
+import { apiRef } from './runtime';
 
 /** Working directory of this TUI instance. */
 export function workdir(): string {
   try {
-    const dir = apiRef?.data?.location?.default?.()?.directory;
-    if (dir) return dir;
-  } catch (e) {}
-  try {
-    const dir = apiRef?.state?.path?.directory;
-    if (dir) return dir;
-  } catch (e) {}
-  return '';
+    return apiRef?.data?.location?.default?.()?.directory || '';
+  } catch {
+    return '';
+  }
 }
 
 /** Pending form (question) requests for a session, from the local store. */
 export function pendingForms(sessionId: string): any[] {
   try {
     return apiRef?.data?.session?.form?.list?.(sessionId) || [];
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -33,7 +24,7 @@ export function pendingForms(sessionId: string): any[] {
 export function pendingPermissions(sessionId: string): any[] {
   try {
     return apiRef?.data?.session?.permission?.list?.(sessionId) || [];
-  } catch (e) {
+  } catch {
     return [];
   }
 }
@@ -42,7 +33,7 @@ export function pendingPermissions(sessionId: string): any[] {
 export function localRunStatus(sessionId: string): string {
   try {
     return apiRef?.data?.session?.status?.(sessionId) || 'idle';
-  } catch (e) {
+  } catch {
     return 'idle';
   }
 }
@@ -51,7 +42,7 @@ export function localRunStatus(sessionId: string): string {
 export function localSessionTitle(sessionId: string): string {
   try {
     return apiRef?.data?.session?.get?.(sessionId)?.title || '';
-  } catch (e) {
+  } catch {
     return '';
   }
 }
@@ -61,40 +52,32 @@ export async function sessionDirectory(sessionId: string): Promise<string> {
   try {
     const dir = apiRef?.data?.session?.get?.(sessionId)?.location?.directory;
     if (dir) return dir;
-  } catch (e) {}
+  } catch {}
   try {
     const s = unwrapSession(await apiRef?.client?.session?.get({ sessionID: sessionId }));
     if (s?.location?.directory) return s.location.directory;
-  } catch (e) {}
+  } catch {}
   return workdir();
 }
 
 export function navigateHome() {
   try {
-    if (apiRef?.ui?.router?.navigate) return apiRef.ui.router.navigate({ type: 'home' });
-    return apiRef?.route?.navigate('home');
-  } catch (e) {}
+    apiRef?.ui?.router?.navigate({ type: 'home' });
+  } catch {}
 }
 
 export function navigateSession(sessionId: string) {
   try {
-    if (apiRef?.ui?.router?.navigate) return apiRef.ui.router.navigate({ type: 'session', sessionID: sessionId });
-    return apiRef?.route?.navigate('session', { sessionID: sessionId });
-  } catch (e) {}
+    apiRef?.ui?.router?.navigate({ type: 'session', sessionID: sessionId });
+  } catch {}
 }
 
 /** Current route as { type: 'home' | 'session', sessionID? }. */
 export function currentRoute(): { type: string; sessionID?: string } {
   try {
-    if (apiRef?.ui?.router?.current) {
-      const r = apiRef.ui.router.current();
-      if (r) return r;
-    }
-  } catch (e) {}
-  try {
-    const r = apiRef?.route?.current;
-    if (r) return { type: r.name, sessionID: r.params?.sessionID };
-  } catch (e) {}
+    const r = apiRef?.ui?.router?.current?.();
+    if (r) return r;
+  } catch {}
   return { type: 'home' };
 }
 
@@ -115,7 +98,7 @@ export function unwrapSessionId(res: any): string {
   return unwrapSession(res)?.id || '';
 }
 
-/** Directory of a session object (v2 `location.directory`, v1 `directory`). */
+/** Directory of a session object (v2 `location.directory`). */
 export function sessionDirOf(s: any): string {
   return s?.location?.directory || s?.directory || '';
 }

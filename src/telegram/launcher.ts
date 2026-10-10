@@ -1,6 +1,6 @@
 import { exec } from 'child_process';
 import path from 'path';
-import { readProjectPid } from './state';
+import { readProjectPid } from '../core/leader';
 
 export function launchOpenCodeInstance(targetDir: string, callback: (err: Error | null) => void) {
   // Security path check to prevent command injection

@@ -1,4 +1,5 @@
-import { apiRef, readState, writeState } from './state';
+import { apiRef } from '../core/runtime';
+import { readState, writeState } from '../core/store';
 import { cleanAndConvert, cleanCommand, cleanPath } from './textClean';
 
 const SHELL_TOOLS = new Set(['bash', 'run_command', 'execute_command']);

@@ -7,7 +7,6 @@ import {
   saveSessionAgent,
   savePromptStatus,
   savePromptResponse,
-  notifySessionIdle,
   updatePromptResponseMeta,
   registerQuestionRequest,
   registerPermissionRequest,
@@ -15,9 +14,10 @@ import {
   notifyTelegram,
   logDebug
 } from "./telegram";
-import { localRunStatus, localSessionTitle, pendingForms, pendingPermissions } from "./telegram/ctx";
-import { pendingQuestions, permissionRequests, qfMap } from "./telegram/stores";
-import { leaderInterval, setLeaderInterval, readSavedStatuses, isHeartbeatFresh } from "./telegram/state";
+import { localRunStatus, localSessionTitle, pendingForms, pendingPermissions } from "./core/ctx";
+import { pendingQuestions, permissionRequests, qfMap } from "./core/context";
+import { leaderInterval, setLeaderInterval } from "./core/runtime";
+import { computeStatus, reconcileStaleStatuses } from "./core/status";
 import { getStatusSignal } from "./tui/signals";
 import { SessionSidebar } from "./tui/SessionSidebar";
 
@@ -65,11 +65,7 @@ export default Plugin.define({
 
     const updateStatusSafe = (sessionID: string, baseType?: string) => {
       if (!sessionID) return;
-      // Pending form/permission questions take precedence over the run status.
-      let type = baseType || "idle";
-      if (pendingForms(sessionID).length > 0) type = "ask";
-      else if (pendingPermissions(sessionID).length > 0) type = "perm";
-
+      const type = computeStatus(sessionID, baseType);
       const [, setStatus] = getStatusSignal(sessionID);
       setStatus(type);
       saveSessionStatus(sessionID, type);
@@ -78,7 +74,13 @@ export default Plugin.define({
     // v2 events arrive as { type, data, ... }; unwrap once here.
     const onEvent = (name: string, handler: (payload: any) => void) => {
       try {
-        (ctx.data.on as any)(name, (e: any) => handler(e?.data ?? e?.properties ?? e));
+        (ctx.data.on as any)(name, (e: any) => {
+          try {
+            handler(e?.data ?? e?.properties ?? e);
+          } catch (err) {
+            console.error(`[session-tracker] event handler error (${name}):`, err);
+          }
+        });
       } catch (err) {
         console.error(`[session-tracker] failed to subscribe to ${name}:`, err);
       }
@@ -91,9 +93,7 @@ export default Plugin.define({
     });
 
     onEvent("session.idle", (payload) => {
-      const sId = payload?.sessionID;
-      updateStatusSafe(sId, "idle");
-      if (sId) notifySessionIdle(sId);
+      updateStatusSafe(payload?.sessionID, "idle");
     });
 
     onEvent("session.model.selected", (payload) => {
@@ -264,66 +264,24 @@ export default Plugin.define({
     });
 
     // A missed idle event (hot-reload mid-run, crash, dropped event) wedges
-    // badges at RUN: the live store is authoritative for sessions this
-    // instance knows, otherwise the owning instance's heartbeat decides.
-    const ACTIVE_STATUSES = new Set(["busy", "running", "retry", "waiting"]);
-    const reconcileStaleStatuses = async () => {
-      let saved: Record<string, { status: string; dir?: string; timestamp?: number }>;
-      try {
-        saved = readSavedStatuses();
-      } catch { return; }
-      const ids = Object.keys(saved).filter((id) => ACTIVE_STATUSES.has(saved[id]?.status));
-      for (const id of ids) {
-        try {
-          let live = "idle";
-          try { live = localRunStatus(id); } catch {}
-          if (live === "running" || live === "busy") continue;
-          let known = false;
-          try { known = !!(ctx as any).data?.session?.get?.(id); } catch {}
-          if (known) {
-            updateStatusSafe(id, "idle"); // rewrites disk + signal
-            continue;
-          }
-          // Unknown locally: only trust it while the owning instance is alive.
-          let dir = saved[id]?.dir || "";
-          let hbFresh = dir ? isHeartbeatFresh(dir) : false;
-          if (!dir || !hbFresh) {
-            // Last resort: ask the server whether the session still exists.
-            try {
-              const s: any = await (ctx as any).client?.session?.get?.({ sessionID: id });
-              const srvDir = s?.location?.directory || s?.directory || "";
-              if (srvDir) {
-                dir = srvDir;
-                hbFresh = isHeartbeatFresh(srvDir);
-              } else if (s?.id) {
-                continue; // session exists but owner unknown — don't touch
-              } else {
-                updateStatusSafe(id, "idle");
-                continue;
-              }
-            } catch {
-              updateStatusSafe(id, "idle"); // session gone from server
-              continue;
-            }
-          }
-          if (!hbFresh) updateStatusSafe(id, "idle");
-        } catch {}
-      }
-    };
-    reconcileStaleStatuses();
-    const reconcileInterval = setInterval(reconcileStaleStatuses, 10000);
+    // badges at RUN: repair from the durable statuses (see core/status).
+    void reconcileStaleStatuses(updateStatusSafe);
+    const reconcileInterval = setInterval(() => {
+      void reconcileStaleStatuses(updateStatusSafe);
+    }, 10000);
 
-    // Clears the Telegram sync loop on plugin hot-reload; setup re-creates it.
+    // Clears the loop on plugin hot-reload; setup re-creates it.
+    // The Telegram bot itself survives via globalThis (see core/runtime).
     return () => {
       try {
         clearInterval(reconcileInterval);
-      } catch (e) {}
+      } catch {}
       try {
         if (leaderInterval) clearInterval(leaderInterval);
-      } catch (e) {}
+      } catch {}
       try {
         setLeaderInterval(null);
-      } catch (e) {}
+      } catch {}
     };
   },
 });

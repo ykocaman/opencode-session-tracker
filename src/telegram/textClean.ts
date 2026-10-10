@@ -1,9 +1,9 @@
 import os from 'os';
-import { apiRef, activeProjectDir } from './state';
+import { apiRef, activeProjectDir } from '../core/runtime';
 
 function currentDir(): string {
   try {
-    return activeProjectDir || apiRef?.data?.location?.default?.()?.directory || apiRef?.state?.path?.directory || '';
+    return activeProjectDir || apiRef?.data?.location?.default?.()?.directory || '';
   } catch (e) {
     return activeProjectDir || '';
   }

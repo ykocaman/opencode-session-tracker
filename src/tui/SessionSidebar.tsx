@@ -3,7 +3,7 @@ import { createResource, onCleanup, For, Show, createSignal } from "solid-js";
 import type { Plugin } from "@opencode/plugin/tui";
 import { exec } from "child_process";
 import { getTelegramStatus, updateCurrentSessionId, getArchivedSessions, archiveSession } from "../telegram";
-import { currentRoute, localRunStatus, pendingForms, pendingPermissions, unwrapSessionList, workdir } from "../telegram/ctx";
+import { currentRoute, localRunStatus, pendingForms, pendingPermissions, unwrapSessionList, workdir } from "../core/ctx";
 import { getStatusSignal } from "./signals";
 import { SessionItem } from "./SessionItem";
 import { DAY_MS, groupByParent, isListableSession, updatedAt } from "../sessions";

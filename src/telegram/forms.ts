@@ -1,4 +1,5 @@
-import { bot, apiRef, allowedUsers } from './state';
+import { bot, apiRef, allowedUsers } from '../core/runtime';
+import { pendingForms } from '../core/ctx';
 
 // v2 question flow: one Telegram prompt per form field. Answers are collected
 // by field key and submitted via session.form.reply once every field is
@@ -13,7 +14,7 @@ export interface QuestionFlow {
   title: string;
 }
 
-import { qfMap } from './stores';
+import { qfMap, pendingQuestions } from '../core/context';
 
 const questionCounter = (flow: QuestionFlow, index: number) =>
   flow.questions.length > 1 ? ` (${index}/${flow.questions.length})` : '';
@@ -158,4 +159,22 @@ export function closeFlowAnsweredInTerminal(flow: QuestionFlow) {
 
 export function findFlow(predicate: (flow: QuestionFlow) => boolean): QuestionFlow | null {
   return qfMap.values().find(predicate) || null;
+}
+
+/**
+ * Leader duty: flows answered/cancelled in the terminal no longer appear in
+ * the session's pending forms — close their Telegram messages so the user
+ * isn't left staring at dead buttons.
+ */
+export function closeExternallyAnsweredQuestions() {
+  for (const flow of qfMap.values()) {
+    try {
+      if (!flow.chatId || !flow.messageId) continue;
+      const pending = pendingForms(flow.sessionId);
+      if (pending.some((f: any) => f?.id === flow.requestId)) continue;
+      closeFlowAnsweredInTerminal(flow);
+      qfMap.delete(flow.requestId);
+      pendingQuestions.delete(flow.sessionId);
+    } catch {}
+  }
 }

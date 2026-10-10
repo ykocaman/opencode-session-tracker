@@ -1,15 +1,16 @@
 import path from 'path';
 import {
-  apiRef, bot, readActiveProjects, lastProjectsMessage, setLastProjectsMessage,
+  apiRef, bot, lastProjectsMessage, setLastProjectsMessage,
   lastSessionsMessage, setLastSessionsMessage, lastHistoryMessage, setLastHistoryMessage,
-  setProjectStatusOverride, clearProjectStatusOverride,
-} from './state';
+} from '../core/runtime';
+import { readActiveProjects } from '../core/leader';
+import { setProjectStatusOverride, clearProjectStatusOverride } from '../core/store';
 import { registerMessageSession, escapeHtml, buildMessageWithHeaderAndFooter, toMs } from './formatters';
 import { getProjectsKeyboard, getSessionsKeyboard } from './keyboards';
 import { startTailTracking } from './tail';
 import { launchOpenCodeInstance, killOpenCodeInstance } from './launcher';
-import { getTargetDir, getActiveSessionId } from './stores';
-import { sessionDirectory, unwrapSession, unwrapSessionList } from './ctx';
+import { getTargetDir, getActiveSessionId } from '../core/context';
+import { sessionDirectory, unwrapSession, unwrapSessionList } from '../core/ctx';
 
 type MenuMessage = { chatId: number, messageId: number, timestamp: number } | null;
 
