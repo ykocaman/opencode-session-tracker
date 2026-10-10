@@ -102,3 +102,18 @@ export function unwrapSessionId(res: any): string {
 export function sessionDirOf(s: any): string {
   return s?.location?.directory || s?.directory || '';
 }
+
+/**
+ * message.list messages -> ascending by creation time.
+ * The server's default order is oldest-first, so `limit` alone returns a
+ * STALE window on long sessions; callers must pass `order: "desc"` and then
+ * normalize here, so the logic below never depends on server ordering.
+ */
+export function sortMessagesAsc(msgs: any[]): any[] {
+  const ms = (m: any) => {
+    const t = m?.time?.created ?? m?.timeCreated ?? 0;
+    const n = typeof t === 'number' ? t : Number(t);
+    return Number.isFinite(n) ? n : 0;
+  };
+  return [...msgs].sort((a, b) => ms(a) - ms(b));
+}

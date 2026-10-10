@@ -10,7 +10,7 @@ import { getProjectsKeyboard, getSessionsKeyboard } from './keyboards';
 import { startTailTracking } from './tail';
 import { launchOpenCodeInstance, killOpenCodeInstance } from './launcher';
 import { getTargetDir, getActiveSessionId } from '../core/context';
-import { sessionDirectory, unwrapSession, unwrapSessionList } from '../core/ctx';
+import { sessionDirectory, unwrapSession, unwrapSessionList, sortMessagesAsc } from '../core/ctx';
 
 type MenuMessage = { chatId: number, messageId: number, timestamp: number } | null;
 
@@ -125,10 +125,11 @@ export async function handleTailCommand(chatId: number, sessionIdParam?: string 
 export async function sendRecap(chatId: number, messageId: number | undefined, sessionId: string) {
   try {
     const [msgsRes, sRes] = await Promise.all([
-      apiRef.client.message.list({ sessionID: sessionId, limit: 20 }),
+      apiRef.client.message.list({ sessionID: sessionId, limit: 20, order: "desc" }),
       apiRef.client.session.get({ sessionID: sessionId }).catch(() => null)
     ]);
-    const msgList = unwrapSessionList(msgsRes);
+    // Newest-20 window, normalized to ascending; all logic below assumes asc.
+    const msgList = sortMessagesAsc(unwrapSessionList(msgsRes));
     const sData = unwrapSession(sRes);
     const dir = sData?.location?.directory || sData?.directory || getTargetDir();
 

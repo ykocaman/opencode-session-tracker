@@ -2,7 +2,7 @@ import fs from 'fs';
 import { bot, apiRef } from '../core/runtime';
 import { getPromptStatusPath } from '../core/status';
 import { buildMessageWithHeaderAndFooter, buildStatusFromParts, escapeHtml, formatDuration, toMs } from './formatters';
-import { localRunStatus, unwrapSessionList } from '../core/ctx';
+import { localRunStatus, unwrapSessionList, sortMessagesAsc } from '../core/ctx';
 
 export interface TailTracking {
   sessionId: string;
@@ -60,8 +60,9 @@ export async function getSessionActiveContent(
   lastMsgIsAssistant: boolean;
   calculatedDurationStr?: string;
 }> {
-  const msgsRes = await apiRef.client.message.list({ sessionID: sessionId, limit: 10 }).catch(() => null);
-  const msgs = unwrapSessionList(msgsRes);
+  const msgsRes = await apiRef.client.message.list({ sessionID: sessionId, limit: 10, order: "desc" }).catch(() => null);
+  // Newest-10 window, normalized to ascending; all logic below assumes asc.
+  const msgs = sortMessagesAsc(unwrapSessionList(msgsRes));
 
   // v2 has no session.status client method — the local store tracks run state.
   const rawStatus = localRunStatus(sessionId);
